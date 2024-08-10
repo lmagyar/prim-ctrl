@@ -406,49 +406,9 @@ class Phone:
         self.sftp_port = sftp_port
         self.ssh_port = ssh_port
 
-    @abstractmethod
-    async def get_network_type(self, timeout: float) -> str:
-        pass
-
-    @abstractmethod
-    async def start_tailscale(self):
-        pass
-
-    @abstractmethod
-    async def stop_tailscale(self):
-        pass
-
-    @abstractmethod
-    async def start_pftpd(self):
-        pass
-
-    @abstractmethod
-    async def stop_pftpd(self):
-        pass
-
-    @abstractmethod
-    async def start_termux_sshd(self):
-        pass
-
-    @abstractmethod
-    async def stop_termux_sshd(self):
-        pass
-
     @staticmethod
     def _get_service_state(available: bool):
         return 'up' if available else 'down'
-
-    async def test_tailscale(self):
-        available = await self.tailscale.ping_device()
-        logger.info("Tailscale is %s", Phone._get_service_state(available))
-        return available
-
-    async def wait_for_tailscale(self, available: bool, timeout: float):
-        try:
-            await self.tailscale.wait_for_device(available, timeout)
-            logger.info("Tailscale is %s", Phone._get_service_state(available))
-        except asyncio.TimeoutError:
-            raise TimeoutError(f"Can't get Tailscale {Phone._get_service_state(available)} for {timeout} seconds")
 
     async def _connect_remote_port(self, port: int):
         try:
@@ -466,29 +426,126 @@ class Phone:
                 await asyncio.sleep(1)
         await asyncio.wait_for(_while(), timeout)
 
+    @abstractmethod
+    async def get_network_type(self, timeout: float) -> str:
+        pass
+
+    async def test_tailscale(self):
+        available = await self.tailscale.ping_device()
+        logger.info("Tailscale is %s", Phone._get_service_state(available))
+        return available
+
+    @abstractmethod
+    async def _start_tailscale(self):
+        pass
+
+    @abstractmethod
+    async def _stop_tailscale(self):
+        pass
+
+    async def _set_tailscale(self, available: bool, timeout: float):
+        async def _set_tailscale_repeatedly():
+            while True:
+                try:
+                    if available:
+                        await self._start_tailscale()
+                    else:
+                        await self._stop_tailscale()
+                    await self.tailscale.wait_for_device(available, min(10, timeout))
+                    return
+                except TimeoutError:
+                    pass
+        try:
+            await asyncio.wait_for(_set_tailscale_repeatedly(), timeout)
+            logger.info("  Tailscale is %s", Phone._get_service_state(available))
+        except asyncio.TimeoutError:
+            raise TimeoutError(f"Can't get Tailscale {Phone._get_service_state(available)} for {timeout} seconds")
+
+    async def start_tailscale(self, timeout: float):
+        logger.info("Starting Tailscale...")
+        await self._set_tailscale(True, timeout)
+
+    async def stop_tailscale(self, timeout: float):
+        logger.info("Stopping Tailscale...")
+        await self._set_tailscale(False, timeout)
+
     async def test_pftpd(self):
         available = await self._connect_remote_port(self.sftp_port)
         logger.info("pFTPd is %s", Phone._get_service_state(available))
         return available
 
-    async def wait_for_pftpd(self, available: bool, timeout: float):
+    @abstractmethod
+    async def _start_pftpd(self):
+        pass
+
+    @abstractmethod
+    async def _stop_pftpd(self):
+        pass
+
+    async def _set_pftpd(self, available: bool, timeout: float):
+        async def _set_pftpd_repeatedly():
+            while True:
+                try:
+                    if available:
+                        await self._start_pftpd()
+                    else:
+                        await self._stop_pftpd()
+                    await self._wait_for_remote_port(self.sftp_port, available, min(10, timeout))
+                    return
+                except TimeoutError:
+                    pass
         try:
-            await self._wait_for_remote_port(self.sftp_port, available, timeout)
-            logger.info("pFTPd is %s", Phone._get_service_state(available))
+            await asyncio.wait_for(_set_pftpd_repeatedly(), timeout)
+            logger.info("  pFTPd is %s", Phone._get_service_state(available))
         except asyncio.TimeoutError:
             raise TimeoutError(f"Can't get pFTPd {Phone._get_service_state(available)} for {timeout} seconds")
+
+    async def start_pftpd(self, timeout: float):
+        logger.info("Starting pFTPd...")
+        await self._set_pftpd(True, timeout)
+
+    async def stop_pftpd(self, timeout: float):
+        logger.info("Stopping pFTPd...")
+        await self._set_pftpd(False, timeout)
 
     async def test_termux_sshd(self):
         available = await self._connect_remote_port(self.ssh_port)
         logger.info("Termux's sshd is %s", Phone._get_service_state(available))
         return available
 
-    async def wait_for_termux_sshd(self, available: bool, timeout: float):
+    @abstractmethod
+    async def _start_termux_sshd(self):
+        pass
+
+    @abstractmethod
+    async def _stop_termux_sshd(self):
+        pass
+
+    async def _set_termux_sshd(self, available: bool, timeout: float):
+        async def _set_termux_sshd_repeatedly():
+            while True:
+                try:
+                    if available:
+                        await self._start_termux_sshd()
+                    else:
+                        await self._stop_termux_sshd()
+                    await self._wait_for_remote_port(self.ssh_port, available, min(10, timeout))
+                    return
+                except TimeoutError:
+                    pass
         try:
-            await self._wait_for_remote_port(self.ssh_port, available, timeout)
-            logger.info("Termux's sshd is %s", Phone._get_service_state(available))
+            await asyncio.wait_for(_set_termux_sshd_repeatedly(), timeout)
+            logger.info("  Termux's sshd is %s", Phone._get_service_state(available))
         except asyncio.TimeoutError:
             raise TimeoutError(f"Can't get Termux's sshd {Phone._get_service_state(available)} for {timeout} seconds")
+
+    async def start_termux_sshd(self, timeout: float):
+        logger.info("Starting Termux's sshd...")
+        await self._set_termux_sshd(True, timeout)
+
+    async def stop_termux_sshd(self, timeout: float):
+        logger.info("Stopping Termux's sshd...")
+        await self._set_termux_sshd(False, timeout)
 
 class AutomatePhone(Phone):
     VARIABLE_NETWORK_INTERFACE = 'network_interface'
@@ -511,7 +568,7 @@ class AutomatePhone(Phone):
         self.funnel = funnel
 
     async def get_network_type(self, timeout: float):
-        logger.info("Getting network type")
+        logger.info("Getting network type...")
         funnel_url = self.funnel.get_url(self.tailscale.tailnet)
         # first test funnel + webhooks availability, to not wait for a reply if local tailscale or funnel is down
         try:
@@ -541,28 +598,22 @@ class AutomatePhone(Phone):
         logger.info("  network type is %s", network_type)
         return network_type
 
-    async def start_tailscale(self):
-        logger.info("Starting Tailscale")
+    async def _start_tailscale(self):
         await self.automate.send_message('start-tailscale')
 
-    async def stop_tailscale(self):
-        logger.info("Stopping Tailscale")
+    async def _stop_tailscale(self):
         await self.automate.send_message('stop-tailscale')
 
-    async def start_pftpd(self):
-        logger.info("Starting pFTPd")
+    async def _start_pftpd(self):
         await self.automate.send_message('start-pftpd')
 
-    async def stop_pftpd(self):
-        logger.info("Stoping pFTPd")
+    async def _stop_pftpd(self):
         await self.automate.send_message('stop-pftpd')
 
-    async def start_termux_sshd(self):
-        logger.info("Starting Termux sshd")
+    async def _start_termux_sshd(self):
         await self.automate.send_message('start-termux-sshd')
 
-    async def stop_termux_sshd(self):
-        logger.info("Stoping Termux sshd")
+    async def _stop_termux_sshd(self):
         await self.automate.send_message('stop-termux-sshd')
 
 class HomeAssistantPhone(Phone):
@@ -575,7 +626,7 @@ class HomeAssistantPhone(Phone):
         self.sftp_port = sftp_port
 
     async def get_network_type(self, timeout: float):
-        logger.info("Getting network type")
+        logger.info("Getting network type...")
         await self.homeassistant_websocket.subscribe_command_update_sensors_notification_received_event()
         await self.homeassistant.update_sensors()
         await self.homeassistant_websocket.get_command_update_sensors_notification_received_event(timeout)
@@ -586,41 +637,35 @@ class HomeAssistantPhone(Phone):
         logger.info("  network type is %s", network_type)
         return network_type
     
-    async def _tailscale(self, run: bool):
+    async def _tailscale_intent(self, available: bool):
         return await self.homeassistant.broadcast_intent(
             "com.tailscale.ipn",
-            "com.tailscale.ipn." + ("CONNECT_VPN" if run else "DISCONNECT_VPN"))
+            "com.tailscale.ipn." + ("CONNECT_VPN" if available else "DISCONNECT_VPN"))
 
-    async def start_tailscale(self):
-        logger.info("Starting Tailscale")
-        result = await self._tailscale(True)
+    async def _start_tailscale(self):
+        await self._tailscale_intent(True)
         await self.homeassistant.update_sensors()
-        return result
 
-    async def stop_tailscale(self):
-        logger.info("Stopping Tailscale")
-        result = await self._tailscale(False)
+    async def _stop_tailscale(self):
+        await self._tailscale_intent(False)
         await self.homeassistant.update_sensors()
-        return result
 
-    async def _pftpd(self, run: bool):
+    async def _pftpd_activity(self, available: bool):
         return await self.homeassistant.start_activity(
             "org.primftpd.lmagyar",
-            "org.primftpd.ui." + ("StartServerAndExitActivity" if run else "StopServerAndExitActivity"),
+            "org.primftpd.ui." + ("StartServerAndExitActivity" if available else "StopServerAndExitActivity"),
             "android.intent.action.MAIN")
 
-    async def start_pftpd(self):
-        logger.info("Starting pFTPd")
-        return await self._pftpd(True)
+    async def _start_pftpd(self):
+        return await self._pftpd_activity(True)
 
-    async def stop_pftpd(self):
-        logger.info("Stoping pFTPd")
-        return await self._pftpd(False)
+    async def _stop_pftpd(self):
+        return await self._pftpd_activity(False)
     
-    async def start_termux_sshd(self):
+    async def _start_termux_sshd(self):
         raise NotImplementedError("Sending RUN_COMMAND is not supported by HomeAssistant, and will never be supported, see: https://github.com/home-assistant/android/issues/4080")
 
-    async def stop_termux_sshd(self):
+    async def _stop_termux_sshd(self):
         raise NotImplementedError("Sending RUN_COMMAND is not supported by HomeAssistant, and will never be supported, see: https://github.com/home-assistant/android/issues/4080")
 
 ########
@@ -703,24 +748,18 @@ class Control:
                     state[Control.TERMUX_SSHD] = await phone.test_termux_sshd()
         async def _start(state: dict | None):
             if state is None or not state.get(Control.TAILSCALE, False):
-                await phone.start_tailscale()
-                await phone.wait_for_tailscale(True, 60)
+                await phone.start_tailscale(60)
             if state is None or not state.get(Control.PFTPD, False):
-                await phone.start_pftpd()
-                await phone.wait_for_pftpd(True, 60)
+                await phone.start_pftpd(60)
             if args.ssh_port is not None and (state is None or not state.get(Control.TERMUX_SSHD, False)):
-                await phone.start_termux_sshd()
-                await phone.wait_for_termux_sshd(True, 60)
+                await phone.start_termux_sshd(60)
         async def _stop(state: dict | None):
             if args.ssh_port is not None and (state is None or not state.get(Control.TERMUX_SSHD, False)):
-                await phone.stop_termux_sshd()
-                await phone.wait_for_termux_sshd(False, 60)
+                await phone.stop_termux_sshd(60)
             if state is None or not state.get(Control.PFTPD, False):
-                await phone.stop_pftpd()
-                await phone.wait_for_pftpd(False, 60)
+                await phone.stop_pftpd(60)
             if state is None or not state.get(Control.TAILSCALE, False):
-                await phone.stop_tailscale()
-                await phone.wait_for_tailscale(False, 60)
+                await phone.stop_tailscale(60)
         match args.intent:
             case 'test':
                 network_type = await phone.get_network_type(60)
