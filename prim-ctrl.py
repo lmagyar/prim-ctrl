@@ -678,7 +678,7 @@ class Control:
 
     def prepare(self, args):
         if args.force_test and args.accept_vpn:
-            raise ValueError("Can't be both --force-test and --accept-vpn enabled")
+            raise ValueError("Can't be both --force-test and --accept-vpn option enabled")
         if args.intent != 'start' and (args.force_test or args.accept_vpn or args.accept_cellular):
             raise ValueError("Any of the --force-test, --accept-vpn or --accept-cellular options can be enabled only for the start intent")
         if args.intent != 'start' and args.backup_state:
