@@ -166,12 +166,12 @@ class Automate:
         self.headers = {
             "content-type": "application/json",
         }
-    async def send_message(self, message: str, high_priority: bool = False):
+    async def send_message(self, message: str):
         data = {
             "secret": self.secret,
             "to": self.account,
             "device": self.device,
-            "priority": "high" if high_priority else "normal",
+            "priority": "high",
             "payload": f"prim-ctrl;{time.time()};" + message
         }
         async with self.session.post(f'https://llamalab.com/automate/cloud/message', json=data) as response:
@@ -523,9 +523,7 @@ class AutomatePhone(Phone):
         # get network interface
         self.webhooks.subscribe_variable(AutomatePhone.VARIABLE_NETWORK_INTERFACE)
         async def _get_network_type():
-            await self.automate.send_message(
-                f'get-network-interface;{funnel_url}{Webhooks.get_variable_path(AutomatePhone.VARIABLE_NETWORK_INTERFACE)}',
-                True)
+            await self.automate.send_message(f'get-network-interface;{funnel_url}{Webhooks.get_variable_path(AutomatePhone.VARIABLE_NETWORK_INTERFACE)}')
             return await self.webhooks.get_variable(AutomatePhone.VARIABLE_NETWORK_INTERFACE, min(5, timeout))
         async def _get_network_type_repeatedly():
             while True:
