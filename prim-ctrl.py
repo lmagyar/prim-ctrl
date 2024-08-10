@@ -672,6 +672,8 @@ class Control:
         parser.add_argument('-b', '--backup-state', help="in case of start, backup current state to stdout as single string (in case of an error, it will even try to restore the original state)", default=False, action='store_true')
         parser.add_argument('-r', '--restore-state', metavar="STATE", help="in case of stop, restore previous state from STATE (use -b to get a valid STATE string)", action='store')
 
+        parser.add_argument('--debug', help="use debug level logging, overrides the --silent option", default=False, action='store_true')
+
     @abstractmethod
     async def run(self, args):
         pass
@@ -686,6 +688,8 @@ class Control:
         if args.intent != 'stop' and args.restore_state:
             raise ValueError("The --restore-state option can be enabled only for the stop intent")
 
+        if args.debug:
+            logger.setLevel(logging.DEBUG)
         logger.prepare(args.timestamp, args.silent)
 
     async def execute(self, args, phone: Phone):
@@ -849,7 +853,6 @@ async def main():
         logger.error(repr(e))
 
 if __name__ == "__main__":
-    # logger.setLevel(logging.DEBUG)
     with suppress(KeyboardInterrupt):
         asyncio.run(main())
     exit(logger.exitcode)
