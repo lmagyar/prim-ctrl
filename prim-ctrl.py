@@ -522,13 +522,11 @@ class AutomatePhone(Phone):
             raise RuntimeError(f"Local Tailscale is down or local Funnel is not configured properly for {funnel_url}")
         # get network interface
         self.webhooks.subscribe_variable(AutomatePhone.VARIABLE_NETWORK_INTERFACE)
-        async def _get_network_type():
-            await self.automate.send_message(f'get-network-interface;{funnel_url}{Webhooks.get_variable_path(AutomatePhone.VARIABLE_NETWORK_INTERFACE)}')
-            return await self.webhooks.get_variable(AutomatePhone.VARIABLE_NETWORK_INTERFACE, min(5, timeout))
         async def _get_network_type_repeatedly():
             while True:
                 try:
-                    return await _get_network_type()
+                    await self.automate.send_message(f'get-network-interface;{funnel_url}{Webhooks.get_variable_path(AutomatePhone.VARIABLE_NETWORK_INTERFACE)}')
+                    return await self.webhooks.get_variable(AutomatePhone.VARIABLE_NETWORK_INTERFACE, min(5, timeout))
                 except TimeoutError:
                     pass
         try:
