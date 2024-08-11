@@ -821,7 +821,7 @@ class AutomateControl(Control):
 
     async def run(self, args):
         self.prepare(args)
-        async with aiohttp.ClientSession() as session:
+        async with aiohttp.ClientSession(connector=aiohttp.TCPConnector(force_close=True)) as session:
             async with Webhooks(Funnel.LOCAL_HOST, args.funnel_local_port) as webhooks:
                 async with Tailscale(session, args.tailscale_tailnet, args.tailscale_remote_machine_name, args.tailscale_secretfile) as tailscale:
                     phone = AutomatePhone(
