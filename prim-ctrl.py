@@ -715,7 +715,7 @@ class Control:
         parser.add_argument('-b', '--backup-state', help="in case of start, backup current state to stdout as single string (in case of an error, it will even try to restore the original state)", default=False, action='store_true')
         parser.add_argument('-r', '--restore-state', metavar="STATE", help="in case of stop, restore previous state from STATE (use -b to get a valid STATE string)", action='store')
 
-        parser.add_argument('--debug', help="use debug level logging, overrides the --silent option", default=False, action='store_true')
+        parser.add_argument('--debug', help="use debug level logging and add stack trace for exceptions, overrides the --silent option", default=False, action='store_true')
 
     @abstractmethod
     async def run(self, args):
@@ -870,6 +870,7 @@ class HomeAssistantControl(Control):
                     await self.execute(args, phone)
 
 async def main():
+    args = None
     try:
         parser = argparse.ArgumentParser(
             description="Remote management of your phone's Tailscale, Primitive FTPd and Termux's sshd app statuses via the Automate or Home Assistant app\n\n"
@@ -887,7 +888,10 @@ async def main():
         await args.ctor().run(args)
 
     except Exception as e:
-        logger.error(repr(e))
+        if not args or args.debug:
+            logger.exception(e)
+        else:
+            logger.error(repr(e))
 
 if __name__ == "__main__":
     with suppress(KeyboardInterrupt):
