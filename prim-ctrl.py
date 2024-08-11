@@ -858,7 +858,7 @@ class HomeAssistantControl(Control):
         self.prepare(args)
         if r'/' in args.ha_host:
             raise ValueError("Home Assistant's hostname can't contain '/' character")
-        async with aiohttp.ClientSession() as session:
+        async with aiohttp.ClientSession(connector=aiohttp.TCPConnector(force_close=True)) as session:
             async with HomeAssistantWebsocket(session, args.ha_host, args.ha_tokenfile) as homeassistant_websocket:
                 async with Tailscale(session, args.tailscale_tailnet, args.tailscale_remote_machine_name, args.tailscale_secretfile) as tailscale:
                     phone = HomeAssistantPhone(
