@@ -705,8 +705,8 @@ class Control:
         parser.add_argument('sftp_port', metavar='sftp-port', help="Primitive FTPd's sftp port, for availability test")
         parser.add_argument('ssh_port', nargs='?', metavar='ssh-port', help="Termux's ssh port, for availability test, optional")
 
-        parser.add_argument('-s', '--silent', help="only errors printed", default=False, action='store_true')
         parser.add_argument('-t', '--timestamp', help="prefix each message with an UTC timestamp", default=False, action='store_true')
+        parser.add_argument('-s', '--silent', help="only errors printed", default=False, action='store_true')
 
         parser.add_argument('-i', '--intent', choices=["test", "start", "stop"], help="what to do with the apps, default: test", default="test")
         parser.add_argument('-f', '--force-test', help="in case of start, if Tailscale is already up, don't return error, but stop everything to test underlying network type (wifi or cellular) then start everything up again", default=False, action='store_true')
@@ -722,6 +722,10 @@ class Control:
         pass
 
     def prepare(self, args):
+        if args.debug:
+            logger.setLevel(logging.DEBUG)
+        logger.prepare(args.timestamp, args.silent)
+
         if args.force_test and args.accept_vpn:
             raise ValueError("Can't be both --force-test and --accept-vpn option enabled")
         if args.intent != 'start' and (args.force_test or args.accept_vpn or args.accept_cellular):
@@ -730,10 +734,6 @@ class Control:
             raise ValueError("The --backup-state option can be enabled only for the start intent")
         if args.intent != 'stop' and args.restore_state:
             raise ValueError("The --restore-state option can be enabled only for the stop intent")
-
-        if args.debug:
-            logger.setLevel(logging.DEBUG)
-        logger.prepare(args.timestamp, args.silent)
 
     async def execute(self, args, phone: Phone):
         async def _backup_state(state: dict, network_type: str):
@@ -856,8 +856,8 @@ class HomeAssistantControl(Control):
 
     async def run(self, args):
         self.prepare(args)
-        if r'/' in args.ha_host:
-            raise ValueError("Home Assistant's hostname can't contain '/' character")
+        if any(c in args.ha_host for c in r'/@'):
+            raise ValueError("Home Assistant's hostname can't contain '/@' characters")
         async with aiohttp.ClientSession(connector=aiohttp.TCPConnector(force_close=True)) as session:
             async with HomeAssistantWebsocket(session, args.ha_host, args.ha_tokenfile) as homeassistant_websocket:
                 async with Tailscale(session, args.tailscale_tailnet, args.tailscale_remote_machine_name, args.tailscale_secretfile) as tailscale:
