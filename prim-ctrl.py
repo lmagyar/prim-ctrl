@@ -3,22 +3,20 @@ import argparse
 import asyncio
 import logging
 import os
+import platform
 import re
+import subprocess
 import sys
 import time
 from abc import abstractmethod
 from contextlib import suppress
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict
 
 import aiohttp
-import ntplib
 from aiohttp import web
 from attr import dataclass
-from ntplib import NTPException
-from tailscale import Device
-from tailscale import Tailscale as TailscaleApi
 
 ########
 
@@ -88,6 +86,17 @@ def set_secret(tokenfile:str, token: str):
 
 def get_secret_age(tokenfile:str):
     return (datetime.now(timezone.utc) - datetime.fromtimestamp(os.stat(str(Path.home() / ".secrets" / tokenfile)).st_mtime, timezone.utc)).total_seconds()
+
+# based on https://stackoverflow.com/a/55656177/2755656
+def ping(host, packets: int = 1, timeout: float = 1):
+    if platform.system().lower() == 'windows':
+        command = ['ping', '-n', str(packets), '-w', str(int(timeout*1000)), host]
+        result = subprocess.run(command, capture_output=True, creationflags=subprocess.CREATE_NO_WINDOW)
+        return result.returncode == 0 and b'TTL=' in result.stdout
+    else:
+        command = ['ping', '-c', str(packets), '-w', str(int(timeout)), host]
+        result = subprocess.run(command, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        return result.returncode == 0
 
 ########
 
@@ -176,103 +185,18 @@ class Automate:
             await response.text()
 
 class Tailscale():
-    TOKEN_SUFFIX = '.token'
-
-    def __init__(self, session: aiohttp.ClientSession, tailnet: str, machine_name: str, secretfile: str):
-        self.session = session
-        self.tailnet = tailnet
-        self.machine_name = machine_name
-        self.secretfile = secretfile
-        self.tailscale_client = None
-        self.deviceid = None
-
-    async def _start(self):
-        # create new access_token from client_secret if previous access_token is expired or nonexistent
-        tokenfile = self.secretfile + Tailscale.TOKEN_SUFFIX
-        token = None
-        try:
-            if 3300 > get_secret_age(tokenfile):
-                token = get_secret(tokenfile)
-        except FileNotFoundError:
-            pass
-        if token is None:
-            secret = get_secret(self.secretfile)
-            client_id = secret.split('-')[2]
-            data = {
-                "client_id": client_id,
-                "client_secret": secret,
-                "grant_type": "client_credentials",
-                "scope" : "devices:read"
-            }
-            async with self.session.post('https://api.tailscale.com/api/v2/oauth/token', data=data) as response:
-                json_response = await response.json()
-            expires_in = json_response.get('expires_in')
-            token = json_response.get('access_token')
-            assert expires_in is not None and token is not None
-            if expires_in < 3600:
-                raise RuntimeError(f'Tailscale access token received shorter that 1 hour, {expires_in} seconds expiration')
-            set_secret(tokenfile, token)
-        self.tailscale_client = TailscaleApi(tailnet=self.tailnet, api_key=token, session=self.session)
-
-    async def device(self) -> Device:
-        assert self.tailscale_client is not None
-        if not self.deviceid:
-            devices = await self.tailscale_client.devices()
-            devicename = f'{self.machine_name}.{self.tailnet}'
-            for device in devices.values():
-                if device.name == devicename:
-                    self.deviceid = device.device_id
-                    break
-            if not self.deviceid:
-                raise RuntimeError(f"Device {self.machine_name} in {self.tailnet} is unknown by Tailscale")
-        data = await self.tailscale_client._request(f"device/{self.deviceid}?fields=all")
-        return Device.from_json(data)
-
-    ntp_is_accessed = False
-    ntp_offset: timedelta
-    ping_limit: int
+    def __init__(self, tailnet: str, machine_name: str):
+        self.host = f'{machine_name}.{tailnet}'
 
     async def ping_device(self):
-        last_seen = (await self.device()).last_seen
-        if last_seen is None:
-            logger.debug("Tailscale.ping_device() last_seen=None")
-            return False
-        else:
-            now = datetime.now(timezone.utc)
-            if not self.ntp_is_accessed:
-                try:
-                    ntpclient = ntplib.NTPClient()
-                    ntpstats = ntpclient.request('pool.ntp.org', version=3)
-                    self.ntp_offset = timedelta(seconds=ntpstats.offset)
-                    self.ping_limit = 3
-                except NTPException:
-                    logger.warning("NTP is unavailable, Tailscale device availability testing is slower and inaccurate")
-                    self.ntp_offset = timedelta(0)
-                    self.ping_limit = 6
-                finally:
-                    self.ntp_is_accessed = True
-            difference = (now + self.ntp_offset - last_seen).total_seconds()
-            logger.debug("Tailscale.ping_device() last_seen=%s now=%s offset=%s difference=%s", last_seen, now, self.ntp_offset, difference)
-            return self.ping_limit > difference
+        return ping(self.host)
     
     async def wait_for_device(self, available: bool, timeout: float):
         async def _while():
             while await self.ping_device() != available:
-                await asyncio.sleep(2)
+                if not available:
+                    await asyncio.sleep(1)
         await asyncio.wait_for(_while(), timeout)
-        if available:
-            # TS refreshes the peer state quite fast, we have to wait a little for the tun0 interface to be ready
-            await asyncio.sleep(2)
-
-    def __enter__(self):
-        raise TypeError("Use async with instead")
-    def __exit__(self, exc_type, exc_value, exc_tb):
-        pass
-    async def __aenter__(self):
-        await self._start()
-        return self
-    async def __aexit__(self, exc_type, exc_value, exc_tb):
-        pass
 
 @dataclass
 class Funnel:
