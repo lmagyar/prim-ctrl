@@ -289,10 +289,9 @@ class Funnel:
 ########
 
 class Phone:
-    def __init__(self, tailscale: Tailscale, sftp_port: int, ssh_port: int):
+    def __init__(self, tailscale: Tailscale, sftp_port: int):
         self.tailscale = tailscale
         self.sftp_port = sftp_port
-        self.ssh_port = ssh_port
 
     @staticmethod
     def _get_service_state(available: bool):
@@ -396,45 +395,6 @@ class Phone:
         logger.info("Stopping pFTPd...")
         await self._set_pftpd(False, timeout)
 
-    async def test_termux_sshd(self):
-        available = await self._connect_remote_port(self.ssh_port)
-        logger.info("Termux's sshd is %s", Phone._get_service_state(available))
-        return available
-
-    @abstractmethod
-    async def _start_termux_sshd(self):
-        pass
-
-    @abstractmethod
-    async def _stop_termux_sshd(self):
-        pass
-
-    async def _set_termux_sshd(self, available: bool, timeout: float):
-        async def _set_termux_sshd_repeatedly():
-            while True:
-                try:
-                    if available:
-                        await self._start_termux_sshd()
-                    else:
-                        await self._stop_termux_sshd()
-                    await self._wait_for_remote_port(self.ssh_port, available, min(10, timeout))
-                    return
-                except TimeoutError:
-                    pass
-        try:
-            await asyncio.wait_for(_set_termux_sshd_repeatedly(), timeout)
-            logger.info("  Termux's sshd is %s", Phone._get_service_state(available))
-        except asyncio.TimeoutError:
-            raise TimeoutError(f"Can't get Termux's sshd {Phone._get_service_state(available)} for {timeout} seconds")
-
-    async def start_termux_sshd(self, timeout: float):
-        logger.info("Starting Termux's sshd...")
-        await self._set_termux_sshd(True, timeout)
-
-    async def stop_termux_sshd(self, timeout: float):
-        logger.info("Stopping Termux's sshd...")
-        await self._set_termux_sshd(False, timeout)
-
 class AutomatePhone(Phone):
     VARIABLE_NETWORK_INTERFACE = 'network_interface'
 
@@ -448,8 +408,8 @@ class AutomatePhone(Phone):
     }
 
     def __init__(self, session: aiohttp.ClientSession, webhooks: Webhooks, automate: Automate, funnel: Funnel, tailscale: Tailscale,
-            sftp_port: int, ssh_port: int):
-        super().__init__(tailscale, sftp_port, ssh_port)
+            sftp_port: int):
+        super().__init__(tailscale, sftp_port)
         self.session = session
         self.webhooks = webhooks
         self.automate = automate
@@ -498,12 +458,6 @@ class AutomatePhone(Phone):
     async def _stop_pftpd(self):
         await self.automate.send_message('stop-pftpd')
 
-    async def _start_termux_sshd(self):
-        await self.automate.send_message('start-termux-sshd')
-
-    async def _stop_termux_sshd(self):
-        await self.automate.send_message('stop-termux-sshd')
-
 ########
 
 class WideHelpFormatter(argparse.RawTextHelpFormatter):
@@ -530,7 +484,6 @@ class Control:
     NETWORK_TYPE = 'network'
     TAILSCALE = 'tailscale'
     PFTPD = 'sftp'
-    TERMUX_SSHD = 'ssh'
 
     @staticmethod
     def setup_parser(parser):
@@ -580,18 +533,12 @@ class Control:
             state[Control.TAILSCALE] = tailscale
             if tailscale:
                 state[Control.PFTPD] = await phone.test_pftpd()
-                if args.ssh_port is not None:
-                    state[Control.TERMUX_SSHD] = await phone.test_termux_sshd()
         async def _start(state: dict | None):
             if state is None or not state.get(Control.TAILSCALE, False):
                 await phone.start_tailscale(60)
             if state is None or not state.get(Control.PFTPD, False):
                 await phone.start_pftpd(60)
-            if args.ssh_port is not None and (state is None or not state.get(Control.TERMUX_SSHD, False)):
-                await phone.start_termux_sshd(60)
         async def _stop(state: dict | None):
-            if args.ssh_port is not None and (state is None or not state.get(Control.TERMUX_SSHD, False)):
-                await phone.stop_termux_sshd(60)
             if state is None or not state.get(Control.PFTPD, False):
                 await phone.stop_pftpd(60)
             if state is None or not state.get(Control.TAILSCALE, False):
@@ -603,8 +550,6 @@ class Control:
                 # tailscale api false-positively reporting running tailscale instance for a few seconds after manually turning it off
                 if network_type == 'vpn' and await phone.test_tailscale():
                     await phone.test_pftpd()
-                    if args.ssh_port is not None:
-                        await phone.test_termux_sshd()
             case 'start':
                 state = dict()
                 try:
@@ -636,10 +581,9 @@ class AutomateControl(Control):
     @staticmethod
     def setup_subparser(subparsers):
         parser = subparsers.add_parser('Automate', aliases=['a'],
-            description="Remote management of your phone's Tailscale, Primitive FTPd and Termux's sshd app statuses via the Automate app\n\n"
+            description="Remote management of your phone's Tailscale and Primitive FTPd app statuses via the Automate app\n\n"
                 "Note: your laptop must be part of the Tailscale VPN and accessible through Tailscale funnel (eg.: tailscale funnel --bg --https=8443 --set-path=/prim-ctrl \"http://127.0.0.1:12345\")\n"
-                "Note: you must install Automate on your phone, download prim-ctrl flow into it, and configure your Google account in the flow to receive mesages (see the project's GitHub page for more details)\n"
-                "Note: optionally you can install Termux on your phone, and configure it to start/stop sshd on Automate's request (see the project's GitHub page for more details)",
+                "Note: you must install Automate on your phone, download prim-ctrl flow into it, and configure your Google account in the flow to receive mesages (see the project's GitHub page for more details)",
             formatter_class=WideHelpFormatter)
         
         parser.add_argument('automate_account', metavar='automate-account', help="your Google account email you set up in the Automate flow's first Set variable block's Value field")
@@ -666,7 +610,7 @@ class AutomateControl(Control):
                         Automate(session, args.automate_account, args.automate_device, args.automate_tokenfile),
                         Funnel(args.funnel_local_port, args.funnel_local_path, args.funnel_local_machine_name, args.funnel_external_port),
                         tailscale,
-                        args.sftp_port, args.ssh_port)
+                        args.sftp_port)
 
                     await self.execute(args, phone)
 
@@ -674,7 +618,7 @@ async def main():
     args = None
     try:
         parser = argparse.ArgumentParser(
-            description="Remote management of your phone's Tailscale, Primitive FTPd and Termux's sshd app statuses via the Automate app",
+            description="Remote management of your phone's Tailscale and Primitive FTPd app statuses via the Automate app",
             formatter_class=WideHelpFormatter)
         subparsers = parser.add_subparsers(required=True,
             title="Phone app to use for control")
