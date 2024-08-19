@@ -10,14 +10,12 @@ from abc import abstractmethod
 from contextlib import suppress
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Callable, Dict, Tuple
+from typing import Dict
 
 import aiohttp
 import ntplib
-from aiohttp import web, ClientConnectorError
+from aiohttp import web
 from attr import dataclass
-from hass_client import HomeAssistantClient as HomeAssistantWebsocketClient
-from hass_client.models import Event
 from ntplib import NTPException
 from tailscale import Device
 from tailscale import Tailscale as TailscaleApi
@@ -176,116 +174,6 @@ class Automate:
         }
         async with self.session.post(f'https://llamalab.com/automate/cloud/message', json=data) as response:
             await response.text()
-
-class HomeAssistantWebsocket(HomeAssistantWebsocketClient):
-    COMMAND_UPDATE_SENSORS_NOTIFICATION_RECEIVED = 'command_update_sensors_notification_received'
-
-    def __init__(self, session: aiohttp.ClientSession, host: str, tokenfile: str):
-        super().__init__(f'wss://{host}/api/websocket', get_secret(tokenfile), session)
-        self.event_subscriptions = dict[str, Tuple[Callable, asyncio.Queue[Event]]]()
-
-    async def subscribe_event(self, subscription: str, event_type: str, filter: Callable[[Event], bool]):
-        def _event_handler(event: Event):
-            subscription_data = self.event_subscriptions.get(subscription)
-            if subscription_data:
-                _unsubscribe, queue = subscription_data
-                if filter(event):
-                    with suppress(asyncio.QueueFull):
-                        queue.put_nowait(event)
-        if subscription not in self.event_subscriptions:
-            unsubscribe = await self.subscribe_events(_event_handler, event_type)
-            self.event_subscriptions[subscription] = (unsubscribe, asyncio.Queue[Event](maxsize=16))
-
-    def unsubscribe_event(self, subscription: str):
-        subscription_data = self.event_subscriptions.pop(subscription, None)
-        if subscription_data:
-            unsubscribe, _queue = subscription_data
-            unsubscribe()
-    
-    async def subscribe_command_update_sensors_notification_received_event(self):
-        def _filter_command_update_sensors_notification_received(event: Event) -> bool:
-            if data := event.get('data'):
-                if message := data.get('message'):
-                    if message == 'command_update_sensors':
-                        return True
-            return False
-        await self.subscribe_event(HomeAssistantWebsocket.COMMAND_UPDATE_SENSORS_NOTIFICATION_RECEIVED, 'mobile_app_notification_received', _filter_command_update_sensors_notification_received)
-
-    def unsubscribe_command_update_sensors_notification_received_event(self):
-        self.unsubscribe_event(HomeAssistantWebsocket.COMMAND_UPDATE_SENSORS_NOTIFICATION_RECEIVED)
-
-    async def get_event(self, subscription: str, timeout: float):
-        subscription_data = self.event_subscriptions.get(subscription)
-        if not subscription_data:
-            raise ValueError(f"The {subscription} is unknown")
-        _unsubscribe, queue = subscription_data
-        try:
-            return await asyncio.wait_for(queue.get(), timeout)
-        except asyncio.TimeoutError:
-            raise TimeoutError(f"Can't get event for {subscription} for {timeout} seconds")
-
-    async def get_command_update_sensors_notification_received_event(self, timeout: float):
-        await self.get_event(HomeAssistantWebsocket.COMMAND_UPDATE_SENSORS_NOTIFICATION_RECEIVED, timeout)
-
-    def __enter__(self):
-        raise TypeError("Use async with instead")
-    def __exit__(self, exc_type, exc_value, exc_tb):
-        pass
-    async def __aenter__(self):
-        await super().__aenter__()
-        return self
-    async def __aexit__(self, exc_type, exc_value, exc_tb):
-        return await super().__aexit__(exc_type, exc_value, exc_tb)
-
-class HomeAssistant():
-    def __init__(self, session: aiohttp.ClientSession, host: str, phone: str, tokenfile: str):
-        self.session = session
-        self.host = host
-        self.phone = phone
-        self.headers = {
-            "Authorization": "Bearer " + get_secret(tokenfile),
-            "content-type": "application/json",
-        }
-
-    async def _get_api(self, path: str):
-        async with self.session.get(f'https://{self.host}{path}', headers=self.headers) as response:
-            return await response.json()
-
-    async def _post_api(self, path: str, data):
-        async with self.session.post(f'https://{self.host}{path}', headers=self.headers, json=data) as response:
-            return await response.json()
-
-    async def get_state(self, entity_id: str):
-        return await self._get_api(f'/api/states/{entity_id}')
-
-    async def _call_service(self, domain: str, service: str, service_data):
-        return await self._post_api(f'/api/services/{domain}/{service}', service_data)
-
-    async def _notify(self, message: str, message_data):
-        service_data = {
-            "message": message,
-            "data": message_data}
-        return await self._call_service('notify', f'mobile_app_{self.phone}', service_data)
-
-    async def update_sensors(self):
-        message_data = {
-            "priority": "high",
-            "ttl": 0,
-            "confirmation": True}
-        return await self._notify("command_update_sensors", message_data)
-
-    async def broadcast_intent(self, package_name: str, action: str):
-        message_data = {
-            "intent_package_name": package_name,
-            "intent_action": action}
-        return await self._notify("command_broadcast_intent", message_data)
-
-    async def start_activity(self, package_name: str, class_name: str, action: str):
-        message_data = {
-            "intent_package_name": package_name,
-            "intent_class_name": class_name,
-            "intent_action": action}
-        return await self._notify("command_activity", message_data)
 
 class Tailscale():
     TOKEN_SUFFIX = '.token'
@@ -616,61 +504,9 @@ class AutomatePhone(Phone):
     async def _stop_termux_sshd(self):
         await self.automate.send_message('stop-termux-sshd')
 
-class HomeAssistantPhone(Phone):
-    def __init__(self, homeassistant_websocket: HomeAssistantWebsocket, homeassistant: HomeAssistant, tailscale: Tailscale,
-            sftp_port: int, ssh_port: int):
-        super().__init__(tailscale, sftp_port, ssh_port)
-        self.homeassistant_websocket = homeassistant_websocket
-        self.homeassistant = homeassistant
-        self.tailscale = tailscale
-        self.sftp_port = sftp_port
-
-    async def get_network_type(self, timeout: float):
-        logger.info("Getting network type...")
-        await self.homeassistant_websocket.subscribe_command_update_sensors_notification_received_event()
-        await self.homeassistant.update_sensors()
-        await self.homeassistant_websocket.get_command_update_sensors_notification_received_event(timeout)
-        # wait a little, until HA refreshes the state
-        await asyncio.sleep(1)
-        network_type = (await self.homeassistant.get_state(f'sensor.{self.homeassistant.phone}_network_type'))['state']
-        self.homeassistant_websocket.unsubscribe_command_update_sensors_notification_received_event()
-        logger.info("  network type is %s", network_type)
-        return network_type
-    
-    async def _tailscale_intent(self, available: bool):
-        return await self.homeassistant.broadcast_intent(
-            "com.tailscale.ipn",
-            "com.tailscale.ipn." + ("CONNECT_VPN" if available else "DISCONNECT_VPN"))
-
-    async def _start_tailscale(self):
-        await self._tailscale_intent(True)
-        await self.homeassistant.update_sensors()
-
-    async def _stop_tailscale(self):
-        await self._tailscale_intent(False)
-        await self.homeassistant.update_sensors()
-
-    async def _pftpd_activity(self, available: bool):
-        return await self.homeassistant.start_activity(
-            "org.primftpd.lmagyar",
-            "org.primftpd.ui." + ("StartServerAndExitActivity" if available else "StopServerAndExitActivity"),
-            "android.intent.action.MAIN")
-
-    async def _start_pftpd(self):
-        return await self._pftpd_activity(True)
-
-    async def _stop_pftpd(self):
-        return await self._pftpd_activity(False)
-    
-    async def _start_termux_sshd(self):
-        raise NotImplementedError("Sending RUN_COMMAND is not supported by HomeAssistant, and will never be supported, see: https://github.com/home-assistant/android/issues/4080")
-
-    async def _stop_termux_sshd(self):
-        raise NotImplementedError("Sending RUN_COMMAND is not supported by HomeAssistant, and will never be supported, see: https://github.com/home-assistant/android/issues/4080")
-
 ########
 
-class WideHelpFormatter(argparse.RawDescriptionHelpFormatter):
+class WideHelpFormatter(argparse.RawTextHelpFormatter):
     def __init__(self, prog: str, indent_increment: int = 2, max_help_position: int = 35, width: int | None = None) -> None:
         super().__init__(prog, indent_increment, max_help_position, width)
 
@@ -834,54 +670,16 @@ class AutomateControl(Control):
 
                     await self.execute(args, phone)
 
-class HomeAssistantControl(Control):
-    @staticmethod
-    def setup_subparser(subparsers):
-        parser = subparsers.add_parser('HomeAssistant', aliases=['ha'],
-            description="Remote management of your phone's Tailscale, Primitive FTPd and Termux's sshd app statuses via the Home Assistant app\n\n"
-                "Note: your laptop must be part of the Tailscale VPN\n"
-                "Note: you must enable the Network type sensor in the Home Assistant app\n"
-                "Note: optionally you can install Termux on your phone, and configure it to start/stop sshd on request (see the project's GitHub page for more details)\n"
-                "      but with HomeAssistant only the availability can be tested, Home Assistant intentionally can't send intents to Termux to run commands\n"
-                "      see: https://github.com/home-assistant/android/issues/4080",
-            formatter_class=WideHelpFormatter)
-
-        parser.add_argument('ha_host', metavar='ha-host', help="the Home Assistant device's hostname and optionally the port, without protocol and path (eg. my-homeassistant.duckdns.org:8123 or my-homeassistant.tailxxxx.ts.net)")
-        parser.add_argument('ha_phone', metavar='ha-phone', help="device name in Home Assistant's Mobile App integration (the Entity ID behind 'device_tracker.xxx')")
-        parser.add_argument('ha_tokenfile', metavar='ha-tokenfile', help="filename containing Home Assistant's Long-Lived Access Token that located under your .secrets folder")
-
-        Control.setup_parser(parser)
-
-        parser.set_defaults(ctor=HomeAssistantControl)
-
-    async def run(self, args):
-        self.prepare(args)
-        if any(c in args.ha_host for c in r'/@'):
-            raise ValueError("Home Assistant's hostname can't contain '/@' characters")
-        async with aiohttp.ClientSession(connector=aiohttp.TCPConnector(force_close=True)) as session:
-            async with HomeAssistantWebsocket(session, args.ha_host, args.ha_tokenfile) as homeassistant_websocket:
-                async with Tailscale(session, args.tailscale_tailnet, args.tailscale_remote_machine_name, args.tailscale_secretfile) as tailscale:
-                    phone = HomeAssistantPhone(
-                        homeassistant_websocket,
-                        HomeAssistant(session, args.ha_host, args.ha_phone, args.ha_tokenfile),
-                        tailscale,
-                        args.sftp_port, args.ssh_port)
-
-                    await self.execute(args, phone)
-
 async def main():
     args = None
     try:
         parser = argparse.ArgumentParser(
-            description="Remote management of your phone's Tailscale, Primitive FTPd and Termux's sshd app statuses via the Automate or Home Assistant app\n\n"
-                "Note: prefer Automate, because Home Assistant's entity status of the phone's network_type can't be reliably updated,\n"
-                "      and Home Assistant intentionally can't send intents to Termux to run commands",
+            description="Remote management of your phone's Tailscale, Primitive FTPd and Termux's sshd app statuses via the Automate app",
             formatter_class=WideHelpFormatter)
         subparsers = parser.add_subparsers(required=True,
             title="Phone app to use for control")
 
         AutomateControl.setup_subparser(subparsers)
-        HomeAssistantControl.setup_subparser(subparsers)
 
         args = parser.parse_args()
 
