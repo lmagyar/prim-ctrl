@@ -1,1 +1,3 @@
 aiohttp==3.10.4
+platformdirs==4.2.2
+zeroconf==0.132.2
