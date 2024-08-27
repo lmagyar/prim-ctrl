@@ -645,22 +645,22 @@ class Control:
         match args.intent:
             case 'test':
                 if phone.vpn and phone.remote_sftp and phone.state:
-                    for k, v in (await phone.state.get(10, 30)).items():
+                    phone_state, _vpn_state = await asyncio.gather(phone.state.get(10, 30), phone.vpn.test())
+                    for k, v in phone_state.items():
                         logger.info("%s is %s", LazyStr(lambda: State.NAMES[k]), LazyStr(StateSerializer.dump_value, v))
-                    await phone.vpn.test()
                 elif phone.vpn and phone.remote_sftp and await phone.vpn.test():
                     await phone.remote_sftp.test()
                 else:
                     await phone.local_sftp.test()
             case 'start':
                 if phone.vpn and phone.remote_sftp and phone.state:
-                    phone_state = await phone.state.get(10, 30)
+                    phone_state, vpn_state = await asyncio.gather(phone.state.get(10, 30), phone.vpn.test())
                     state = dict()
                     state[Control.WIFI] = phone_state[State.WIFI]
+                    state[Control.VPN] = vpn_state
                     state[Control.SFTP] = phone_state[State.PFTPD]
                     if not state[Control.WIFI] and not args.accept_cellular:
                         raise RuntimeError(f"Phone is not on Wi-Fi network")
-                    state[Control.VPN] = await phone.vpn.test()
                     # make sftp accessible
                     try:
                         local_accessible = False
