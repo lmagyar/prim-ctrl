@@ -794,8 +794,8 @@ class AutomateControl(Control):
                 automate = Automate(Secrets(), session, args.automate_account, args.automate_device, args.automate_tokenfile)
                 local_pftpd = pFTPdZeroconf(args.server_name, service_cache, service_resolver, AutomatepFTPd(automate))
                 tailscale = Tailscale(args.tailscale[0], args.tailscale[1], AutomateTailscale(automate)) if args.tailscale else None
-                remote_pftpd = pFTPd(tailscale.host, args.tailscale[2], local_pftpd.manager) if tailscale else None
-                funnel = Funnel(tailscale, args.funnel[0], args.funnel[1], args.funnel[2], args.funnel[3]) if tailscale and args.funnel else None
+                remote_pftpd = pFTPd(tailscale.host, int(args.tailscale[2]), local_pftpd.manager) if tailscale else None
+                funnel = Funnel(tailscale, args.funnel[0], int(args.funnel[1]), args.funnel[2], int(args.funnel[3])) if tailscale and args.funnel else None
 
                 async with Webhooks(Funnel.LOCAL_HOST, funnel.local_port) if funnel else nullcontext() as webhooks:
                     state = AutomateState(session, webhooks, automate, funnel.external_url) if funnel and webhooks else None
