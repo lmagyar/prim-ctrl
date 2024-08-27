@@ -134,7 +134,7 @@ class Secrets:
 
 class Pingable:
     @abstractmethod
-    async def ping(self) -> bool:
+    async def ping(self, availability_hint: bool | None = None) -> bool:
         pass
 
     def get_class_name(self):
@@ -145,12 +145,11 @@ class Pingable:
         return 'up' if available else 'down'
 
     async def wait_for(self, available: bool, timeout: float):
-        async def _while():
-            while await self.ping() != available:
+        logger.debug("Waiting for %s to be %s (timeout is %ds)", LazyStr(self.get_class_name), LazyStr(Pingable.get_state_name, available), int(timeout))
+        async with asyncio.timeout(timeout):
+            while await self.ping(available) != available:
                 if not available:
                     await asyncio.sleep(1)
-        logger.debug("Waiting for %s to be %s (timeout is %d seconds)", LazyStr(self.get_class_name), LazyStr(Pingable.get_state_name, available), int(timeout))
-        await asyncio.wait_for(_while(), timeout)
 
 class Manager:
     @abstractmethod
@@ -167,26 +166,26 @@ class Manageable(Pingable):
         self.manager = manager
 
     async def _set_state(self, available: bool, repeat: float, timeout: float):
-        async def _set_state_repeatedly():
-            while True:
-                try:
-                    if available:
-                        await self.manager.start()
-                    else:
-                        await self.manager.stop()
-                    await self.wait_for(available, min(repeat, timeout))
-                    return
-                except TimeoutError:
-                    pass
         action_name = LazyStr(lambda: 'Starting' if available else 'Stopping')
         class_name = LazyStr(self.get_class_name)
         available_name = LazyStr(Pingable.get_state_name, available)
         logger.info("%s %s...", action_name, class_name)
+        logger.debug("%s %s (repeat after %ds, timeout is %ds)", action_name, class_name, int(repeat), int(timeout))
         try:
-            await asyncio.wait_for(_set_state_repeatedly(), timeout)
-            logger.info("  %s is %s", class_name, available_name)
-        except asyncio.TimeoutError:
-            raise TimeoutError(f"Can't get {class_name} {available_name} for {timeout} seconds")
+            async with asyncio.timeout(timeout):
+                while True:
+                    try:
+                        if available:
+                            await self.manager.start()
+                        else:
+                            await self.manager.stop()
+                        await self.wait_for(available, min(repeat, timeout))
+                        break
+                    except TimeoutError:
+                        pass
+        except TimeoutError as e:
+            raise TimeoutError(f"Can't get {class_name} {available_name} for {timeout} seconds") from e
+        logger.info("  %s is %s", class_name, available_name)
 
     async def test(self):
         available = await self.ping()
@@ -205,22 +204,29 @@ class Service(Manageable):
         self.host = host
         self.port = port
 
-    async def ping(self):
+    async def ping(self, _availability_hint: bool | None = None):
+        async def _connect(connect_timeout: float):
+            logger.debug(" Connecting to %s on port %d (timeout is %ds)", self.host, self.port, connect_timeout)
+            async with asyncio.timeout(connect_timeout):
+                return await asyncio.open_connection(self.host, self.port)
         logger.debug("Pinging %s (%s:%d)", LazyStr(self.get_class_name), self.host, self.port)
         try:
-            _reader, writer = await asyncio.wait_for(asyncio.open_connection(self.host, self.port), timeout=2)
+            _reader, writer = await _connect(2)
             writer.close()
             await writer.wait_closed()
             return True
-        except:
+        except (TimeoutError, socket.gaierror):
             return False
+        except Exception as e:
+            logger.debug("  Unexpected ping exception: %s", e.__str__())
+            raise
 
 class Device(Manageable):
     def __init__(self, host: str, manager: Manager):
         super().__init__(manager)
         self.host = host
 
-    async def ping(self):
+    async def ping(self, availability_hint: bool | None = None):
         logger.debug("Pinging %s (%s)", LazyStr(self.get_class_name), self.host)
         return await async_ping(self.host, timeout=2)
 
@@ -309,9 +315,10 @@ class Webhooks:
         if not queue:
             raise ValueError(f"The {variable} is unknown")
         try:
-            return await asyncio.wait_for(queue.get(), timeout)
-        except asyncio.TimeoutError:
-            raise TimeoutError(f"Can't get value of {variable} for {timeout} seconds")
+            async with asyncio.timeout(timeout):
+                return await queue.get()
+        except TimeoutError as e:
+            raise TimeoutError(f"Can't get value of {variable} for {timeout} seconds") from e
 
     def __enter__(self):
         raise TypeError("Use async with instead")
@@ -382,17 +389,17 @@ class AutomateState(State):
             raise RuntimeError(f"Local Tailscale is down or local Funnel is not configured properly for {self.external_url}")
         # get state
         self.webhooks.subscribe_variable(AutomateState.VARIABLE_STATE)
-        async def _get_state_repeatedly():
-            while True:
-                try:
-                    await self.automate.send_message(f'get-state;{self.external_url}{Webhooks.get_variable_path(AutomateState.VARIABLE_STATE)}')
-                    return await self.webhooks.get_variable(AutomateState.VARIABLE_STATE, min(repeat, timeout))
-                except TimeoutError:
-                    pass
         try:
-            state = await asyncio.wait_for(_get_state_repeatedly(), timeout)
-        except asyncio.TimeoutError:
-            raise TimeoutError(f"Can't get value of {AutomateState.VARIABLE_STATE} for {timeout} seconds")
+            async with asyncio.timeout(timeout):
+                while True:
+                    try:
+                        await self.automate.send_message(f'get-state;{self.external_url}{Webhooks.get_variable_path(AutomateState.VARIABLE_STATE)}')
+                        state = await self.webhooks.get_variable(AutomateState.VARIABLE_STATE, min(repeat, timeout))
+                        break
+                    except TimeoutError:
+                        pass
+        except TimeoutError as e:
+            raise TimeoutError(f"Can't get value of {AutomateState.VARIABLE_STATE} for {timeout} seconds") from e
         finally:
             self.webhooks.unsubscribe_variable(AutomateState.VARIABLE_STATE)
         logger.info("  state is %s", state)
@@ -507,39 +514,46 @@ class ZeroconfService(Manageable):
         self.service_cache = service_cache
         self.service_resolver = service_resolver
 
-    async def ping(self):
-        async def connect(connect_timeout: float, resolve_timeout: float):
-            async def asyncio_wait_for_open_connection(host: str, port: int, timeout: float):
-                logger.debug("Connecting to %s on port %d (timeout is %d seconds)", host, port, timeout)
-                return await asyncio.wait_for(asyncio.open_connection(host, port), timeout)
+    async def ping(self, availability_hint: bool | None = None):
+        async def _connect(connect_timeout: float, resolve_timeout: float):
+            async def asyncio_open_connection(host: str, port: int, timeout: float):
+                logger.debug(" Connecting to %s on port %d (timeout is %ds)", host, port, timeout)
+                async with asyncio.timeout(timeout):
+                    return await asyncio.open_connection(host, port)
             async def service_resolver_get(service_name: str, timeout: float):
-                logger.debug("Resolving %s (timeout is %d seconds)", service_name, timeout)
+                logger.debug(" Resolving %s (timeout is %ds)", service_name, timeout)
                 return await self.service_resolver.get(service_name, timeout)
             if self.host and self.port:
-                return await asyncio_wait_for_open_connection(self.host, self.port, connect_timeout)
+                return await asyncio_open_connection(self.host, self.port, connect_timeout)
             host, port = self.service_cache.get(self.service_name)
             if host and port:
                 try:
-                    reader_writer = await asyncio_wait_for_open_connection(host, port, connect_timeout)
+                    reader_writer = await asyncio_open_connection(host, port, connect_timeout)
                     self.host = host
                     self.port = port
                     return reader_writer
                 except (TimeoutError, socket.gaierror):
-                    pass
+                    if availability_hint is None or availability_hint:
+                        pass
+                    else:
+                        raise
             host, port = await service_resolver_get(self.service_name, resolve_timeout)
-            reader_writer = await asyncio_wait_for_open_connection(host, port, connect_timeout)
+            reader_writer = await asyncio_open_connection(host, port, connect_timeout)
             self.service_cache.set(self.service_name, host, port)
             self.host = host
             self.port = port
             return reader_writer
         logger.debug("Pinging %s (%s - %s:%s)", LazyStr(self.get_class_name), self.service_name, str(self.host), str(self.port))
         try:
-            _reader, writer = await connect(2, 4)
+            _reader, writer = await _connect(2, 6)
             writer.close()
             await writer.wait_closed()
             return True
-        except:
+        except (TimeoutError, socket.gaierror):
             return False
+        except Exception as e:
+            logger.debug("  Unexpected ping exception: %s", e.__str__())
+            raise
 
 ########
 
@@ -557,18 +571,21 @@ class pFTPdServiceListener(ServiceListener):
 
     def set_service(self, service_name: str, service_info: ServiceInfo):
         if service_name == self.server_name and service_info.port:
-            self.cache.set(service_name, service_info.parsed_addresses()[0], int(service_info.port))
+            host = service_info.parsed_addresses()[0]
+            port = int(service_info.port)
+            self.cache.set(service_name, host, port)
+            logger.debug(" (ServiceListener) Resolved %s to %s:%d", service_name, host, port)
 
     def del_service(self, service_name: str):
         pass
+
+class pFTPd(Service):
+    pass
 
 class pFTPdZeroconf(ZeroconfService):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.__qualname__ = pFTPd.__qualname__
-
-class pFTPd(Service):
-    pass
 
 class Tailscale(Device):
     def __init__(self, tailnet: str, machine_name: str, manager: Manager):
