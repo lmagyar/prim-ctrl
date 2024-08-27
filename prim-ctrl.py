@@ -667,21 +667,27 @@ class Control:
                         remote_accessible = False
                         if not state[Control.SFTP]:
                             if not state[Control.VPN]:
-                                try:
-                                    await phone.local_sftp.start(10, 30)
-                                    local_accessible = True
-                                except TimeoutError:
+                                if state[Control.WIFI]:
+                                    try:
+                                        await phone.local_sftp.start(10, 30)
+                                        local_accessible = True
+                                    except TimeoutError:
+                                        await phone.vpn.start(10, 60)
+                                        remote_accessible = await phone.remote_sftp.test()
+                                else:
                                     await phone.vpn.start(10, 60)
-                                    remote_accessible = await phone.remote_sftp.test()
+                                    await phone.remote_sftp.start(10, 30)
+                                    remote_accessible = True
                             else:
                                 # Note: even we test the remote accessibility during start, this doesn't disclose the possibility, that sftp will be accessible locally
                                 #       but sure it is an error, if it doesn't accessible even remotely
                                 await phone.remote_sftp.start(10, 30)
                                 remote_accessible = True
-                                local_accessible = await phone.local_sftp.test()
+                                if state[Control.WIFI]:
+                                    local_accessible = await phone.local_sftp.test()
                         else:
                             if not state[Control.VPN]:
-                                if not (local_accessible := await phone.local_sftp.test()):
+                                if not state[Control.WIFI] or not (local_accessible := await phone.local_sftp.test()):
                                     await phone.vpn.start(10, 60)
                                     remote_accessible = await phone.remote_sftp.test()
                             else:
