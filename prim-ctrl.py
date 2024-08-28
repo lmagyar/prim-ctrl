@@ -184,7 +184,8 @@ class Manageable(Pingable):
                     except TimeoutError:
                         pass
         except TimeoutError as e:
-            raise TimeoutError(f"Can't get {class_name} {available_name} for {timeout} seconds") from e
+            e.add_note(f"Can't get {class_name} {available_name} for {timeout} seconds")
+            raise
         logger.info("  %s is %s", class_name, available_name)
 
     async def test(self):
@@ -318,7 +319,8 @@ class Webhooks:
             async with asyncio.timeout(timeout):
                 return await queue.get()
         except TimeoutError as e:
-            raise TimeoutError(f"Can't get value of {variable} for {timeout} seconds") from e
+            e.add_note(f"Can't get value of {variable} for {timeout} seconds")
+            raise
 
     def __enter__(self):
         raise TypeError("Use async with instead")
@@ -399,7 +401,8 @@ class AutomateState(State):
                     except TimeoutError:
                         pass
         except TimeoutError as e:
-            raise TimeoutError(f"Can't get value of {AutomateState.VARIABLE_STATE} for {timeout} seconds") from e
+            e.add_note(f"Can't get value of {AutomateState.VARIABLE_STATE} for {timeout} seconds")
+            raise
         finally:
             self.webhooks.unsubscribe_variable(AutomateState.VARIABLE_STATE)
         logger.info("  state is %s", state)
