@@ -682,77 +682,75 @@ class Control:
                 else:
                     await phone.local_sftp.test()
             case 'start':
-                if phone.vpn and phone.remote_sftp and phone.state:
-                    phone_state, vpn_state = await gather_with_taskgroup(phone.state.get(10, 30), phone.vpn.test())
+                if phone.vpn and phone.remote_sftp:
                     state = dict()
-                    state[Control.WIFI] = phone_state[State.WIFI]
-                    state[Control.VPN] = vpn_state
-                    state[Control.SFTP] = phone_state[State.PFTPD]
-                    if not state[Control.WIFI] and not args.accept_cellular:
-                        raise RuntimeError(f"Phone is not on Wi-Fi network")
-                    # make sftp accessible
+                    local_accessible = False
+                    remote_accessible = False
+                    # gather state info
+                    if phone.state:
+                        phone_state, vpn_state = await gather_with_taskgroup(phone.state.get(10, 30), phone.vpn.test())
+                        state[Control.WIFI] = phone_state[State.WIFI]
+                        state[Control.VPN] = vpn_state
+                        state[Control.SFTP] = phone_state[State.PFTPD]
+                        if not state[Control.WIFI] and not args.accept_cellular:
+                            raise RuntimeError(f"Phone is not on Wi-Fi network")
+                    else:
+                        state[Control.VPN] = await phone.vpn.test()
+                        if state[Control.VPN]:
+                            state[Control.SFTP] = remote_accessible = await phone.remote_sftp.test()
+                    # start changing state
                     try:
-                        local_accessible = False
-                        remote_accessible = False
-                        if not state[Control.SFTP]:
-                            if not state[Control.VPN]:
-                                if state[Control.WIFI]:
-                                    try:
-                                        await phone.local_sftp.start(10, 30)
-                                        local_accessible = True
-                                    except TimeoutError:
+                        if phone.state:
+                            if not state[Control.SFTP]:
+                                if not state[Control.VPN]:
+                                    if state[Control.WIFI]:
+                                        try:
+                                            local_accessible = await phone.local_sftp.start(10, 30)
+                                        except TimeoutError:
+                                            await phone.vpn.start(10, 60)
+                                            remote_accessible = await phone.remote_sftp.test()
+                                    else:
+                                        await phone.vpn.start(10, 60)
+                                        remote_accessible = await phone.remote_sftp.start(10, 30)
+                                else:
+                                    remote_accessible = await phone.remote_sftp.start(10, 30)
+                                    if state[Control.WIFI]:
+                                        local_accessible = await phone.local_sftp.test()
+                            else:
+                                if not state[Control.VPN]:
+                                    if not state[Control.WIFI] or not (local_accessible := await phone.local_sftp.test()):
                                         await phone.vpn.start(10, 60)
                                         remote_accessible = await phone.remote_sftp.test()
                                 else:
-                                    await phone.vpn.start(10, 60)
-                                    await phone.remote_sftp.start(10, 30)
-                                    remote_accessible = True
-                            else:
-                                # Note: even we test the remote accessibility during start, this doesn't disclose the possibility, that sftp will be accessible locally
-                                #       but sure it is an error, if it doesn't accessible even remotely
-                                await phone.remote_sftp.start(10, 30)
-                                remote_accessible = True
-                                if state[Control.WIFI]:
-                                    local_accessible = await phone.local_sftp.test()
+                                    local_accessible, remote_accessible = await gather_with_taskgroup(phone.local_sftp.test(), phone.remote_sftp.test())
                         else:
                             if not state[Control.VPN]:
-                                if not state[Control.WIFI] or not (local_accessible := await phone.local_sftp.test()):
-                                    await phone.vpn.start(10, 60)
-                                    remote_accessible = await phone.remote_sftp.test()
+                                if not (local_accessible := await phone.local_sftp.test()):
+                                    try:
+                                        local_accessible = await phone.local_sftp.start(10, 30)
+                                    except TimeoutError:
+                                        await phone.vpn.start(10, 60)
+                                        remote_accessible = await phone.remote_sftp.test()
                             else:
-                                local_accessible, remote_accessible = await gather_with_taskgroup(phone.local_sftp.test(), phone.remote_sftp.test())
+                                if not state[Control.SFTP]:
+                                    remote_accessible = await phone.remote_sftp.start(10, 30)
+                                local_accessible = await phone.local_sftp.test()
                         if not local_accessible and not remote_accessible:
                             raise RuntimeError(f"Even when {phone.vpn.get_class_name()} and {phone.remote_sftp.get_class_name()} is started, {phone.remote_sftp.get_class_name()} is still not accessible")
                     except:
-                        # restore state
                         await _stop(state)
                         raise
-                    # backup state
                     if args.backup_state:
                         if not local_accessible:
                             state[Control.ADDRESS] = '|'.join([phone.remote_sftp.host, str(phone.remote_sftp.port)])
                         print(StateSerializer.dumps(state))
-                elif phone.vpn and phone.remote_sftp:
-                    if not await phone.vpn.test():
-                        # Note: in this case (without state) it is possible that the phone is on another Wi-Fi (or cellular) and local_sftp's test() and start() will be false negative
-                        #       but it worth a try, and when it fails, we can still try to start the vpn up
-                        if not await phone.local_sftp.test():
-                            try:
-                                await phone.local_sftp.start(10, 30)
-                            except TimeoutError:
-                                await phone.vpn.start(10, 60)
-                                if not await phone.remote_sftp.test():
-                                    raise RuntimeError(f"Even when {phone.vpn.get_class_name()} and {phone.remote_sftp.get_class_name()} is started, {phone.remote_sftp.get_class_name()} is still not accessible")
-                    else:
-                        # Note: even we test the remote accessibility during start, this doesn't disclose the possibility, that sftp will be accessible locally
-                        #       but sure it is an error, if it doesn't accessible even remotely
-                        if not any(await gather_with_taskgroup(phone.local_sftp.test(), phone.remote_sftp.test())):
-                            await phone.remote_sftp.start(10, 30)
                 else:
-                    # Note: in this case (without state and vpn) it is possible that the phone is on another Wi-Fi (or cellular) and local_sftp's test() and start() will be false negative
-                    #       but we have no more options, this is a best effort
                     if not await phone.local_sftp.test():
-                        await phone.local_sftp.start(10, 30)
+                        try:
+                            await phone.local_sftp.start(10, 30)
+                        except:
+                            await _stop(None)
+                            raise
             case 'stop':
                 await _stop(StateSerializer.loads(args.restore_state) if args.restore_state else None)
 
@@ -781,8 +779,8 @@ class AutomateControl(Control):
             description="To use --tailscale option you must install Tailscale and configure Tailscale VPN on your phone and your laptop\n"
                 "To use --funnel option you must configure Tailscale funnel on your laptop for prim-ctrl's local webhook to accept responses from the Automate app\n"
                 "(eg.: tailscale funnel --bg --https=8443 --set-path=/prim-ctrl \"http://127.0.0.1:12345\")\n"
-                "Note: --funnel and --restore-state options can be used only when --tailscale is used\n"
-                "Note: --accept-cellular and --backup-state options can be used only when --funnel is used")
+                "Note: --funnel, --backup-state and --restore-state options can be used only when --tailscale is used\n"
+                "Note: --accept-cellular option can be used only when --funnel is used")
         vpn_group.add_argument('--tailscale', nargs=3, metavar=('tailnet', 'remote-machine-name', 'sftp-port'), help=
                             "tailnet:             your Tailscale tailnet name (eg. tailxxxx.ts.net)\n"
                             "remote-machine-name: your phone's name within your tailnet (just the name, without the tailnet)\n"
@@ -800,12 +798,12 @@ class AutomateControl(Control):
         super().prepare(args)
         if args.funnel and not args.tailscale:
             raise ValueError("--funnel option can be used only when --tailscale is used")
+        if args.backup_state and not args.tailscale:
+            raise ValueError("--backup-state option can be used only when --tailscale is used")
         if args.restore_state and not args.tailscale:
             raise ValueError("--restore-state option can be used only when --tailscale is used")
         if args.accept_cellular and not args.funnel:
             raise ValueError("--accept-cellular option can be used only when --funnel is used")
-        if args.backup_state and not args.funnel:
-            raise ValueError("--backup-state option can be used only when --funnel is used")
 
     async def run(self, args):
         self.prepare(args)
