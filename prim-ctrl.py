@@ -605,6 +605,14 @@ class WideHelpFormatter(argparse.RawTextHelpFormatter):
     def __init__(self, prog: str, indent_increment: int = 2, max_help_position: int = 35, width: int | None = None) -> None:
         super().__init__(prog, indent_increment, max_help_position, width)
 
+async def gather_with_taskgroup(*coros):
+    try:
+        async with asyncio.TaskGroup() as tg:
+            tasks = [tg.create_task(coro) for coro in coros]
+        return tuple([task.result() for task in tasks])
+    except ExceptionGroup as eg:
+        raise eg.exceptions[0] from (None if len(eg.exceptions) == 1 else eg)
+
 class Control:
     WIFI = 'wifi'
     VPN = 'vpn'
@@ -662,7 +670,7 @@ class Control:
         match args.intent:
             case 'test':
                 if phone.vpn and phone.remote_sftp and phone.state:
-                    phone_state, _vpn_state = await asyncio.gather(phone.state.get(10, 30), phone.vpn.test())
+                    phone_state, _vpn_state = await gather_with_taskgroup(phone.state.get(10, 30), phone.vpn.test())
                     for k, v in phone_state.items():
                         logger.info("%s is %s", LazyStr(lambda: State.NAMES[k]), LazyStr(StateSerializer.dump_value, v))
                 elif phone.vpn and phone.remote_sftp and await phone.vpn.test():
@@ -671,7 +679,7 @@ class Control:
                     await phone.local_sftp.test()
             case 'start':
                 if phone.vpn and phone.remote_sftp and phone.state:
-                    phone_state, vpn_state = await asyncio.gather(phone.state.get(10, 30), phone.vpn.test())
+                    phone_state, vpn_state = await gather_with_taskgroup(phone.state.get(10, 30), phone.vpn.test())
                     state = dict()
                     state[Control.WIFI] = phone_state[State.WIFI]
                     state[Control.VPN] = vpn_state
@@ -708,7 +716,7 @@ class Control:
                                     await phone.vpn.start(10, 60)
                                     remote_accessible = await phone.remote_sftp.test()
                             else:
-                                local_accessible, remote_accessible = await asyncio.gather(phone.local_sftp.test(), phone.remote_sftp.test())
+                                local_accessible, remote_accessible = await gather_with_taskgroup(phone.local_sftp.test(), phone.remote_sftp.test())
                         if not local_accessible and not remote_accessible:
                             raise RuntimeError(f"Even when {phone.vpn.get_class_name()} and {phone.remote_sftp.get_class_name()} is started, {phone.remote_sftp.get_class_name()} is still not accessible")
                     except:
@@ -734,7 +742,7 @@ class Control:
                     else:
                         # Note: even we test the remote accessibility during start, this doesn't disclose the possibility, that sftp will be accessible locally
                         #       but sure it is an error, if it doesn't accessible even remotely
-                        if not any(await asyncio.gather(phone.local_sftp.test(), phone.remote_sftp.test())):
+                        if not any(await gather_with_taskgroup(phone.local_sftp.test(), phone.remote_sftp.test())):
                             await phone.remote_sftp.start(10, 30)
                 else:
                     # Note: in this case (without state and vpn) it is possible that the phone is on another Wi-Fi (or cellular) and local_sftp's test() and start() will be false negative
