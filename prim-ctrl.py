@@ -187,6 +187,7 @@ class Manageable(Pingable):
             e.add_note(f"Can't get {class_name} {available_name} for {timeout} seconds")
             raise
         logger.info("  %s is %s", class_name, available_name)
+        return available
 
     async def test(self):
         available = await self.ping()
@@ -194,10 +195,10 @@ class Manageable(Pingable):
         return available
 
     async def start(self, repeat: float, timeout: float):
-        await self._set_state(True, repeat, timeout)
+        return await self._set_state(True, repeat, timeout)
 
     async def stop(self, repeat: float, timeout: float):
-        await self._set_state(False, repeat, timeout)
+        return await self._set_state(False, repeat, timeout)
 
 class Service(Manageable):
     def __init__(self, host: str, port: int, manager: Manager):
