@@ -621,7 +621,9 @@ class Control:
     WIFI = 'wifi'
     VPN = 'vpn'
     SFTP = 'sftp'
-    ADDRESS = 'address'
+    CONNECTED = 'connected'
+    LOCAL = 'local'
+    REMOTE = 'remote'
 
     @staticmethod
     def setup_parser_arguments(parser):
@@ -740,10 +742,10 @@ class Control:
                     except:
                         await _stop(state)
                         raise
-                    if args.backup_state:
-                        if not local_accessible:
-                            state[Control.ADDRESS] = '|'.join([phone.remote_sftp.host, str(phone.remote_sftp.port)])
-                        print(StateSerializer.dumps(state))
+                    if not args.backup_state:
+                        state = dict()
+                    state[Control.CONNECTED] = Control.LOCAL if local_accessible else Control.REMOTE
+                    print(StateSerializer.dumps(state))
                 else:
                     if not await phone.local_sftp.test():
                         try:
