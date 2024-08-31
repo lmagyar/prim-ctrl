@@ -6,7 +6,7 @@
 
 # Primitive Ctrl
 
-Remote management of your phone's [Tailscale VPN](https://tailscale.com/) and [Primitive FTPd Android SFTP server](https://github.com/wolpi/prim-ftpd).
+Remote management of your phone's [Primitive FTPd Android SFTP server](https://github.com/wolpi/prim-ftpd) and optionally [Tailscale VPN](https://tailscale.com/).
 
 See my other project, https://github.com/lmagyar/prim-sync, for bidirectional and unidirectional sync over SFTP (multiplatform Python script optimized for the Primitive FTPd SFTP server).
 
