@@ -639,7 +639,7 @@ class Control:
         logging_group = parser.add_argument_group('logging')
         logging_group.add_argument('-t', '--timestamp', help="prefix each message with an UTC timestamp", default=False, action='store_true')
         logging_group.add_argument('-s', '--silent', help="only errors printed", default=False, action='store_true')
-        logging_group.add_argument('--debug', help="use debug level logging and add stack trace for exceptions, overrides the --silent option", default=False, action='store_true')
+        logging_group.add_argument('--debug', help="use debug level logging and add stack trace for exceptions, disables the --silent and enables the --timestamp options", default=False, action='store_true')
 
     @staticmethod
     def setup_parser_vpngroup(vpn_group):
@@ -654,7 +654,7 @@ class Control:
     def prepare(self, args):
         if args.debug:
             logger.setLevel(logging.DEBUG)
-        logger.prepare(args.timestamp, args.silent)
+        logger.prepare(args.timestamp or args.debug, args.silent)
 
         if args.accept_cellular and args.intent != 'start':
             raise ValueError("The --accept-cellular options can be enabled only for the start intent")
