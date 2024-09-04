@@ -760,7 +760,7 @@ class AutomateControl(Control):
     @staticmethod
     def setup_subparser(subparsers):
         parser = subparsers.add_parser('Automate', aliases=['a'],
-            description="Remote management of your phone's Primitive FTPd and optionally Tailscale app statuses via the Automate app\n\n"
+            description="Remote control of your phone's Primitive FTPd and optionally Tailscale app statuses via the Automate app, for more details see https://github.com/lmagyar/prim-ctrl\n\n"
                 "Note: you must install Automate app on your phone, download prim-ctrl flow into it, and configure your Google account in the flow to receive messages (see the project's GitHub page for more details)\n"
                 "Note: optionally if your phone is not accessible on local network but your laptop is part of the Tailscale VPN then Tailscale VPN can be started on the phone\n"
                 "Note: optionally if your laptop is accessible through Tailscale funnel then app statuses on the phone can be backed up and restored",
