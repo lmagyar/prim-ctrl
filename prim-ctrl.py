@@ -763,7 +763,8 @@ class AutomateControl(Control):
             description="Remote control of your phone's Primitive FTPd and optionally Tailscale app statuses via the Automate app, for more details see https://github.com/lmagyar/prim-ctrl\n\n"
                 "Note: you must install Automate app on your phone, download prim-ctrl flow into it, and configure your Google account in the flow to receive messages (see the project's GitHub page for more details)\n"
                 "Note: optionally if your phone is not accessible on local network but your laptop is part of the Tailscale VPN then Tailscale VPN can be started on the phone\n"
-                "Note: optionally if your laptop is accessible through Tailscale funnel then app statuses on the phone can be backed up and restored",
+                "Note: optionally if your laptop is accessible through Tailscale Funnel then VPN on cellular can be refused and app statuses on the phone can be backed up and restored\n\n"
+                "Output: even when -b option is not used, the script will output 'connected=(local|remote)', what you can use to determine whether to use -a option for the prim-sync script",
             formatter_class=WideHelpFormatter)
 
         parser.add_argument('automate_account', metavar='automate-account', help="your Google account email you set up in the Automate flow's first Set variable block's Value field")
@@ -779,9 +780,10 @@ class AutomateControl(Control):
 
         vpn_group = parser.add_argument_group('VPN',
             description="To use --tailscale option you must install Tailscale and configure Tailscale VPN on your phone and your laptop\n"
-                "To use --funnel option you must configure Tailscale funnel on your laptop for prim-ctrl's local webhook to accept responses from the Automate app\n"
-                "(eg.: tailscale funnel --bg --https=8443 --set-path=/prim-ctrl \"http://127.0.0.1:12345\")\n"
+                "To use --funnel option you must configure Tailscale Funnel on your laptop for prim-ctrl's local webhook to accept responses from the Automate app\n"
+                "   (eg.: tailscale funnel --bg --https=8443 --set-path=/prim-ctrl \"http://127.0.0.1:12345\")\n"
                 "Note: --funnel, --backup-state and --restore-state options can be used only when --tailscale is used\n"
+                "Note: --backup-state is accurate only, when --funnel is used\n"
                 "Note: --accept-cellular option can be used only when --funnel is used")
         vpn_group.add_argument('--tailscale', nargs=3, metavar=('tailnet', 'remote-machine-name', 'sftp-port'), help=
                             "tailnet:             your Tailscale tailnet name (eg. tailxxxx.ts.net)\n"
@@ -835,7 +837,7 @@ async def main():
     args = None
     try:
         parser = argparse.ArgumentParser(
-            description="Remote management of your phone's Primitive FTPd and Tailscale app statuses via the Automate app",
+            description="Remote control of your phone's Primitive FTPd and optionally Tailscale app statuses via the Automate app, for more details see https://github.com/lmagyar/prim-ctrl",
             formatter_class=WideHelpFormatter)
         subparsers = parser.add_subparsers(required=True,
             title="Phone app to use for control")
