@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Dict
 
 import aiohttp
-from aiohttp import web
+from aiohttp import ClientTimeout, web
 from platformdirs import user_cache_dir
 from zeroconf import Zeroconf, ServiceInfo, ServiceListener as ZeroconfServiceListener
 from zeroconf.asyncio import AsyncZeroconf
@@ -384,13 +384,15 @@ class AutomateState(State):
     async def get(self, repeat: float, timeout: float):
         logger.info("Getting state...")
         # first test funnel + webhooks availability, to not wait for a reply if local tailscale or funnel is down
+        logger.debug("Testing funnel with pinging local webhook (timeout is %ds)", int(timeout))
         try:
-            async with self.session.get(f'{self.external_url}{Webhooks.get_ping_path()}') as response:
+            async with self.session.get(f'{self.external_url}{Webhooks.get_ping_path()}', timeout=ClientTimeout(total=timeout)) as response:
                 if await response.text() != 'pong':
                     raise Exception()
         except:
             raise RuntimeError(f"Local Tailscale is down or local Funnel is not configured properly for {self.external_url}")
         # get state
+        logger.debug("Getting state (repeat after %ds, timeout is %ds)", int(repeat), int(timeout))
         self.webhooks.subscribe_variable(AutomateState.VARIABLE_STATE)
         try:
             async with asyncio.timeout(timeout):
