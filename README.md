@@ -206,6 +206,7 @@ rem Additionally any prim-sync options (starting with "-") can be added after th
 set ctrl_args=Automate youraccount@gmail.com "SOME MANUFACTURER XXXX" automate a-unique-server-name --tailscale tailxxxx.ts.net your-phone 2222 --funnel your-laptop 12345 /prim-ctrl 8443 -t
 set sync_args=a-unique-server-name id_ed25519_sftp -t -sh -rs "/fs/storage/emulated/0" --ignore-locks 360
 set sync_args_vpn=-a your-phone.tailxxxx.ts.net 2222
+set sync_args_mirror_out=-uo -m --overwrite-destination
 
 set arg1=%1
 
@@ -254,7 +255,7 @@ if errorlevel 1 (
                 echo "!PREV_STATE!" | find "connected=remote" >NUL
                 if not errorlevel 1 set sync_args=!sync_args! !sync_args_vpn!
 
-                for %%a in (all Music) do if "!folder_to_sync!"=="%%a" call C:\...\prim-sync\prim-sync.cmd !sync_args! "D:\Mobile" "/fs/storage/XXXX-XXXX" "/saf" "Music" "*"
+                for %%a in (all Music) do if "!folder_to_sync!"=="%%a" call C:\...\prim-sync\prim-sync.cmd !sync_args! !sync_args_mirror_out! "D:\Mobile" "/fs/storage/XXXX-XXXX" "/saf" "Music" "*"
                 for %%a in (all Camera) do if "!folder_to_sync!"=="%%a" call C:\...\prim-sync\prim-sync.cmd !sync_args! "D:\Mobile" "/fs/storage/XXXX-XXXX" "/saf" "Camera" "DCIM/Camera"
                 for %%a in (all Screenshots) do if "!folder_to_sync!"=="%%a" call C:\...\prim-sync\prim-sync.cmd !sync_args! "D:\Mobile" "/fs/storage/emulated/0" "*" "Screenshots" "DCIM/Screenshots"
 
