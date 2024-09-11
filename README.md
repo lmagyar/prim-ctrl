@@ -1,7 +1,4 @@
 
-> [!CAUTION]
-> ***This repository is in alpha***
-
 > [!WARNING]
 > ***This repository works with both the original and the forked version of the Primitive FTPd Android SFTP server!***
 > - ***install my fork from https://github.com/lmagyar/prim-ftpd - and use the prim-ctrl-lmagyar Automate flow below***
