@@ -74,8 +74,8 @@ Optionally you can install:
 ### Automate
 
 - Depending on whether you installed the [forked](https://github.com/lmagyar/prim-ftpd) or the [original](https://github.com/wolpi/prim-ftpd) version of Primitive FTPd, download the appropriate Automate flow to your phone:
-  - Flow for the **forked** Primitive FTPd: https://github.com/lmagyar/prim-ctrl/blob/main/res/prim-ctrl-lmagyar.flo (see [image](https://raw.githubusercontent.com/lmagyar/prim-ctrl/main/res/prim-ctrl-lmagyar.png) of the flow)
-  - Flow for the **original** Primitive FTPd: https://github.com/lmagyar/prim-ctrl/blob/main/res/prim-ctrl.flo (see [image](https://raw.githubusercontent.com/lmagyar/prim-ctrl/main/res/prim-ctrl.png) of the flow)
+  - Flow for the **forked** Primitive FTPd: https://raw.githubusercontent.com/lmagyar/prim-ctrl/main/res/prim-ctrl-lmagyar.flo (see [image](https://raw.githubusercontent.com/lmagyar/prim-ctrl/main/res/prim-ctrl-lmagyar.png) of the flow)
+  - Flow for the **original** Primitive FTPd: https://raw.githubusercontent.com/lmagyar/prim-ctrl/main/res/prim-ctrl.flo (see [image](https://raw.githubusercontent.com/lmagyar/prim-ctrl/main/res/prim-ctrl.png) of the flow)
 - Import it with the ... menu / Import command
 - Enable all privileges
 - Click on the flow, edit the 2. block ("Set variable google_account to...), enter your Google account and press Save
