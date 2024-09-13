@@ -352,7 +352,7 @@ class Automate:
         async with self.session.post(f'https://llamalab.com/automate/cloud/message', json=data) as response:
             await response.text()
 
-class AutomatepFTPd(Manager):
+class AutomatepFTPdManager(Manager):
     def __init__(self, automate: Automate):
         self.automate = automate
 
@@ -362,7 +362,7 @@ class AutomatepFTPd(Manager):
     async def stop(self):
         await self.automate.send_message('stop-pftpd')
 
-class AutomateTailscale(Manager):
+class AutomateTailscaleManager(Manager):
     def __init__(self, automate: Automate):
         self.automate = automate
 
@@ -825,8 +825,8 @@ class AutomateControl(Control):
                 await service_browser.add_service_listener(service_listener)
 
                 automate = Automate(Secrets(), session, args.automate_account, args.automate_device, args.automate_tokenfile)
-                local_pftpd = pFTPdZeroconf(args.server_name, service_cache, service_resolver, AutomatepFTPd(automate))
-                tailscale = Tailscale(args.tailscale[0], args.tailscale[1], AutomateTailscale(automate)) if args.tailscale else None
+                local_pftpd = pFTPdZeroconf(args.server_name, service_cache, service_resolver, AutomatepFTPdManager(automate))
+                tailscale = Tailscale(args.tailscale[0], args.tailscale[1], AutomateTailscaleManager(automate)) if args.tailscale else None
                 remote_pftpd = pFTPd(tailscale.host, int(args.tailscale[2]), local_pftpd.manager) if tailscale else None
                 funnel = Funnel(tailscale, args.funnel[0], int(args.funnel[1]), args.funnel[2], int(args.funnel[3])) if tailscale and args.funnel else None
 
