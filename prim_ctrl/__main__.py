@@ -858,7 +858,8 @@ async def main():
             else:
                 logger.error(LazyStr(repr, e))
 
-if __name__ == "__main__":
+    return logger.exitcode
+
+def run():
     with suppress(KeyboardInterrupt):
-        asyncio.run(main())
-    exit(logger.exitcode)
+        exit(asyncio.run(main()))
