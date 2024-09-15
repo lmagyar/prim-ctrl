@@ -93,7 +93,7 @@ logger = Logger(Path(sys.argv[0]).name)
 def sync_ping(host, packets: int = 1, timeout: float = 1):
     if platform.system().lower() == 'windows':
         command = ['ping', '-n', str(packets), '-w', str(int(timeout*1000)), host]
-        result = subprocess.run(command, capture_output=True, creationflags=subprocess.CREATE_NO_WINDOW)
+        result = subprocess.run(command, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, creationflags=subprocess.CREATE_NO_WINDOW)
         return result.returncode == 0 and b'TTL=' in result.stdout
     else:
         command = ['ping', '-c', str(packets), '-W', str(int(timeout)), host]
