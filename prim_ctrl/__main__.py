@@ -93,6 +93,7 @@ logger = Logger(Path(sys.argv[0]).name)
 def sync_ping(host, packets: int = 1, timeout: float = 1):
     if platform.system().lower() == 'windows':
         command = ['ping', '-n', str(packets), '-w', str(int(timeout*1000)), host]
+        # don't use text=True, the async version will raise ValueError("text must be False"), nobody knows why
         result = subprocess.run(command, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, creationflags=subprocess.CREATE_NO_WINDOW)
         return result.returncode == 0 and b'TTL=' in result.stdout
     else:
@@ -103,6 +104,7 @@ def sync_ping(host, packets: int = 1, timeout: float = 1):
 async def async_ping(host, packets: int = 1, timeout: float = 1):
     if platform.system().lower() == 'windows':
         command = ['ping', '-n', str(packets), '-w', str(int(timeout*1000)), host]
+        # don't use text=True, the async version will raise ValueError("text must be False"), nobody knows why
         proc = await asyncio.create_subprocess_exec(*command, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, creationflags=subprocess.CREATE_NO_WINDOW)
         stdout, _stderr = await proc.communicate()
         return proc.returncode == 0 and b'TTL=' in stdout
