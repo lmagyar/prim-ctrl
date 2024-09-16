@@ -125,15 +125,15 @@ Notes:
 <details><summary>Unix</summary>
 
 ```
-prim-ctrl Automate youraccount@gmail.com "SOME MANUFACTURER XXX" automate a-unique-server-name --tailscale tailxxxx.ts.net your-phone 2222 --funnel your-laptop 12345 /prim-ctrl 8443 -t -i start -b
-prim-ctrl Automate youraccount@gmail.com "SOME MANUFACTURER XXX" automate a-unique-server-name --tailscale tailxxxx.ts.net your-phone 2222 --funnel your-laptop 12345 /prim-ctrl 8443 -t -i stop -r ${PREV_STATE}
+prim-ctrl Automate youraccount@gmail.com "SOME MANUFACTURER XXX" automate your-phone-pftpd --tailscale tailxxxx.ts.net your-phone 2222 --funnel your-laptop 12345 /prim-ctrl 8443 -t -i start -b
+prim-ctrl Automate youraccount@gmail.com "SOME MANUFACTURER XXX" automate your-phone-pftpd --tailscale tailxxxx.ts.net your-phone 2222 --funnel your-laptop 12345 /prim-ctrl 8443 -t -i stop -r ${PREV_STATE}
 ```
 </details>
 <details><summary>Windows</summary>
 
 ```
-prim-ctrl Automate youraccount@gmail.com "SOME MANUFACTURER XXXX" automate a-unique-server-name --tailscale tailxxxx.ts.net your-phone 2222 --funnel your-laptop 12345 /prim-ctrl 8443 -t -i start -b
-prim-ctrl Automate youraccount@gmail.com "SOME MANUFACTURER XXXX" automate a-unique-server-name --tailscale tailxxxx.ts.net your-phone 2222 --funnel your-laptop 12345 /prim-ctrl 8443 -t -i stop -r !PREV_STATE!
+prim-ctrl Automate youraccount@gmail.com "SOME MANUFACTURER XXXX" automate your-phone-pftpd --tailscale tailxxxx.ts.net your-phone 2222 --funnel your-laptop 12345 /prim-ctrl 8443 -t -i start -b
+prim-ctrl Automate youraccount@gmail.com "SOME MANUFACTURER XXXX" automate your-phone-pftpd --tailscale tailxxxx.ts.net your-phone 2222 --funnel your-laptop 12345 /prim-ctrl 8443 -t -i stop -r !PREV_STATE!
 ```
 </details>
 
