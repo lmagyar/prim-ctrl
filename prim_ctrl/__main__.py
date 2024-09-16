@@ -93,7 +93,7 @@ logger = Logger(Path(sys.argv[0]).name)
 def sync_ping(host, packets: int = 1, timeout: float = 1):
     if platform.system().lower() == 'windows':
         command = ['ping', '-n', str(packets), '-w', str(int(timeout*1000)), host]
-        # don't use text=True, the async version will raise ValueError("text must be False"), nobody knows why
+        # don't use text=True, the async version will raise ValueError("text must be False"), who knows why
         result = subprocess.run(command, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, creationflags=subprocess.CREATE_NO_WINDOW)
         return result.returncode == 0 and b'TTL=' in result.stdout
     else:
@@ -104,7 +104,7 @@ def sync_ping(host, packets: int = 1, timeout: float = 1):
 async def async_ping(host, packets: int = 1, timeout: float = 1):
     if platform.system().lower() == 'windows':
         command = ['ping', '-n', str(packets), '-w', str(int(timeout*1000)), host]
-        # don't use text=True, the async version will raise ValueError("text must be False"), nobody knows why
+        # don't use text=True, the async version will raise ValueError("text must be False"), who knows why
         proc = await asyncio.create_subprocess_exec(*command, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, creationflags=subprocess.CREATE_NO_WINDOW)
         stdout, _stderr = await proc.communicate()
         return proc.returncode == 0 and b'TTL=' in stdout
@@ -386,6 +386,7 @@ class AutomateState(State):
     async def get(self, repeat: float, timeout: float):
         logger.info("Getting state...")
         # first test funnel + webhooks availability, to not wait for a reply if local tailscale or funnel is down
+        # though it will be routed locally, it will not go out to Tailscale's TCP forwarder servers, so the route is different from what Automate will see
         logger.debug("Testing funnel with pinging local webhook (timeout is %ds)", int(timeout))
         try:
             async with self.session.get(f'{self.external_url}{Webhooks.get_ping_path()}', timeout=ClientTimeout(total=timeout)) as response:
