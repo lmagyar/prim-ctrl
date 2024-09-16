@@ -817,26 +817,28 @@ class AutomateControl(Control):
     async def run(self, args):
         self.prepare(args)
 
-        async with aiohttp.ClientSession(
+        async with (
+            aiohttp.ClientSession(
                 # Automate messaging server prefers closing connections
-                connector=aiohttp.TCPConnector(force_close=True)) as session:
-            async with AsyncZeroconf() as zeroconf:
-                service_cache = ServiceCache(Cache())
-                service_resolver = SftpServiceResolver(zeroconf)
-                service_listener = pFTPdServiceListener(args.server_name, service_cache)
-                service_browser = SftpServiceBrowser(zeroconf)
-                await service_browser.add_service_listener(service_listener)
+                connector=aiohttp.TCPConnector(force_close=True)) as session,
+            AsyncZeroconf() as zeroconf
+        ):
+            service_cache = ServiceCache(Cache())
+            service_resolver = SftpServiceResolver(zeroconf)
+            service_listener = pFTPdServiceListener(args.server_name, service_cache)
+            service_browser = SftpServiceBrowser(zeroconf)
+            await service_browser.add_service_listener(service_listener)
 
-                automate = Automate(Secrets(), session, args.automate_account, args.automate_device, args.automate_tokenfile)
-                local_pftpd = pFTPdZeroconf(args.server_name, service_cache, service_resolver, AutomatepFTPdManager(automate))
-                tailscale = Tailscale(args.tailscale[0], args.tailscale[1], AutomateTailscaleManager(automate)) if args.tailscale else None
-                remote_pftpd = pFTPd(tailscale.host, int(args.tailscale[2]), local_pftpd.manager) if tailscale else None
-                funnel = Funnel(tailscale, args.funnel[0], int(args.funnel[1]), args.funnel[2], int(args.funnel[3])) if tailscale and args.funnel else None
+            automate = Automate(Secrets(), session, args.automate_account, args.automate_device, args.automate_tokenfile)
+            local_pftpd = pFTPdZeroconf(args.server_name, service_cache, service_resolver, AutomatepFTPdManager(automate))
+            tailscale = Tailscale(args.tailscale[0], args.tailscale[1], AutomateTailscaleManager(automate)) if args.tailscale else None
+            remote_pftpd = pFTPd(tailscale.host, int(args.tailscale[2]), local_pftpd.manager) if tailscale else None
+            funnel = Funnel(tailscale, args.funnel[0], int(args.funnel[1]), args.funnel[2], int(args.funnel[3])) if tailscale and args.funnel else None
 
-                async with Webhooks(Funnel.LOCAL_HOST, funnel.local_port) if funnel else nullcontext() as webhooks:
-                    state = AutomateState(session, webhooks, automate, funnel.external_url) if funnel and webhooks else None
-                    phone = Phone(local_pftpd, tailscale, remote_pftpd, state)
-                    await self.execute(args, phone)
+            async with Webhooks(Funnel.LOCAL_HOST, funnel.local_port) if funnel else nullcontext() as webhooks:
+                state = AutomateState(session, webhooks, automate, funnel.external_url) if funnel and webhooks else None
+                phone = Phone(local_pftpd, tailscale, remote_pftpd, state)
+                await self.execute(args, phone)
 
 async def main():
     args = None
