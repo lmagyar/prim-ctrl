@@ -17,6 +17,8 @@ With the help of this script you can sync your phone eg. with your home NAS serv
 
 See my other project, https://github.com/lmagyar/prim-sync, for bidirectional and unidirectional sync over SFTP (multiplatform Python script optimized for the Primitive FTPd SFTP server).
 
+See my other project, https://github.com/lmagyar/prim-batch, for batch execution of prim-ctrl and prim-sync commands.
+
 **Note:** These are my first ever Python projects, any comments on how to make them better are appreciated.
 
 ## Features
