@@ -219,7 +219,7 @@ class Service(Manageable):
             writer.close()
             await writer.wait_closed()
             return True
-        except (TimeoutError, socket.gaierror):
+        except (TimeoutError, socket.gaierror, ConnectionRefusedError):
             return False
         except Exception as e:
             logger.debug("  Unexpected ping exception: %s", e.__str__())
@@ -541,7 +541,7 @@ class ZeroconfService(Manageable):
                     self.host = host
                     self.port = port
                     return reader_writer
-                except (TimeoutError, socket.gaierror):
+                except (TimeoutError, socket.gaierror, ConnectionRefusedError):
                     if availability_hint is None or availability_hint:
                         pass
                     else:
@@ -558,7 +558,7 @@ class ZeroconfService(Manageable):
             writer.close()
             await writer.wait_closed()
             return True
-        except (TimeoutError, socket.gaierror):
+        except (TimeoutError, socket.gaierror, ConnectionRefusedError):
             return False
         except Exception as e:
             logger.debug("  Unexpected ping exception: %s", e.__str__())
