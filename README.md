@@ -11,9 +11,11 @@
 
 Remote control of your phone's [Primitive FTPd Android SFTP server](https://github.com/wolpi/prim-ftpd) and optionally [Tailscale VPN](https://tailscale.com/).
 
-Though Primitive FTPd consumes minimal power when it is not used, remote start/stop can be usefull. But in case of Tailscale, it is a real battery and mobile network data drain when not used, remote start/stop is de facto very useful.
+Though Primitive FTPd consumes minimal power when it is not used, remote start/stop can be usefull for zeroconf (DNS-SD). Android doesn't reply DSN-SD queries when the screen is off, but Android announces the new service when the Primitive FTPd server starts up. So SFTP clients can/should capture and cache the announcement at Primitive FTPd server startup to connect to a phone through zeroconf even when the screen is off.
 
-With the help of this script you can sync your phone eg. with your home NAS server whereever your phone is on a WiFi network - or even on cellular. Your phone doesn't have to be on the same LAN to make zeroconf working.
+But in case of Tailscale, it is a real battery and mobile network data drain when not used, remote start/stop is de facto very useful.
+
+With the help of this script you can sync your phone with eg. your home NAS server whereever your phone is on a WiFi network - or even on cellular. Your phone doesn't have to be on the same LAN to make zeroconf working when you have alternative access through VPN.
 
 See my other project, https://github.com/lmagyar/prim-sync, for bidirectional and unidirectional sync over SFTP (multiplatform Python script optimized for the Primitive FTPd SFTP server).
 
@@ -23,7 +25,7 @@ See my other project, https://github.com/lmagyar/prim-batch, for batch execution
 
 ## Features
 
-- Remote start/stop of Primitive FTPd Android SFTP server and Tailscale VPN
+- Remote start/stop of Primitive FTPd Android SFTP server and optionally Tailscale VPN
 - Using VPN on cellular can be refused
 - Backup states before starting them, restore when stopping (ie. they won't be stopped if they were running before the script were asked to start them)
 
