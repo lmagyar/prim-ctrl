@@ -1,6 +1,6 @@
 # Changelog
 
-## vNext
+## 0.3.0
 
 - Publish on PyPI
 - Use python-poetry
