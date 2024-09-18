@@ -1,0 +1,30 @@
+[tool.poetry]
+name = "prim-ctrl"
+version = "0.3.0"
+description = "Primitive Ctrl - Remote control of your phone's Primitive FTPd Android SFTP server and optionally Tailscale VPN."
+license = "Apache-2.0"
+authors = ["Laszlo Magyar <lmagyar1973@gmail.com>"]
+readme = "README.md"
+repository = "https://github.com/lmagyar/prim-ctrl"
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Console",
+    "Operating System :: OS Independent",
+]
+packages = [{include = "prim_ctrl"}]
+
+[tool.poetry.urls]
+"Change Log" = "https://github.com/lmagyar/prim-ctrl/blob/main/CHANGELOG.md"
+
+[tool.poetry.dependencies]
+python = "^3.12"
+aiohttp = "3.10.5"
+platformdirs = "4.3.2"
+zeroconf = "0.134.0"
+
+[tool.poetry.scripts]
+prim-ctrl = "prim_ctrl.__main__:run"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"

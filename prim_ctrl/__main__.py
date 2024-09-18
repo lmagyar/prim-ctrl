@@ -93,7 +93,8 @@ logger = Logger(Path(sys.argv[0]).name)
 def sync_ping(host, packets: int = 1, timeout: float = 1):
     if platform.system().lower() == 'windows':
         command = ['ping', '-n', str(packets), '-w', str(int(timeout*1000)), host]
-        result = subprocess.run(command, capture_output=True, creationflags=subprocess.CREATE_NO_WINDOW)
+        # don't use text=True, the async version will raise ValueError("text must be False"), who knows why
+        result = subprocess.run(command, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, creationflags=subprocess.CREATE_NO_WINDOW)
         return result.returncode == 0 and b'TTL=' in result.stdout
     else:
         command = ['ping', '-c', str(packets), '-W', str(int(timeout)), host]
@@ -103,6 +104,7 @@ def sync_ping(host, packets: int = 1, timeout: float = 1):
 async def async_ping(host, packets: int = 1, timeout: float = 1):
     if platform.system().lower() == 'windows':
         command = ['ping', '-n', str(packets), '-w', str(int(timeout*1000)), host]
+        # don't use text=True, the async version will raise ValueError("text must be False"), who knows why
         proc = await asyncio.create_subprocess_exec(*command, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, creationflags=subprocess.CREATE_NO_WINDOW)
         stdout, _stderr = await proc.communicate()
         return proc.returncode == 0 and b'TTL=' in stdout
@@ -217,7 +219,7 @@ class Service(Manageable):
             writer.close()
             await writer.wait_closed()
             return True
-        except (TimeoutError, socket.gaierror):
+        except (TimeoutError, socket.gaierror, ConnectionRefusedError):
             return False
         except Exception as e:
             logger.debug("  Unexpected ping exception: %s", e.__str__())
@@ -352,7 +354,7 @@ class Automate:
         async with self.session.post(f'https://llamalab.com/automate/cloud/message', json=data) as response:
             await response.text()
 
-class AutomatepFTPd(Manager):
+class AutomatepFTPdManager(Manager):
     def __init__(self, automate: Automate):
         self.automate = automate
 
@@ -362,7 +364,7 @@ class AutomatepFTPd(Manager):
     async def stop(self):
         await self.automate.send_message('stop-pftpd')
 
-class AutomateTailscale(Manager):
+class AutomateTailscaleManager(Manager):
     def __init__(self, automate: Automate):
         self.automate = automate
 
@@ -384,6 +386,7 @@ class AutomateState(State):
     async def get(self, repeat: float, timeout: float):
         logger.info("Getting state...")
         # first test funnel + webhooks availability, to not wait for a reply if local tailscale or funnel is down
+        # though it will be routed locally, it will not go out to Tailscale's TCP forwarder servers, so the route is different from what Automate will see
         logger.debug("Testing funnel with pinging local webhook (timeout is %ds)", int(timeout))
         try:
             async with self.session.get(f'{self.external_url}{Webhooks.get_ping_path()}', timeout=ClientTimeout(total=timeout)) as response:
@@ -538,7 +541,7 @@ class ZeroconfService(Manageable):
                     self.host = host
                     self.port = port
                     return reader_writer
-                except (TimeoutError, socket.gaierror):
+                except (TimeoutError, socket.gaierror, ConnectionRefusedError):
                     if availability_hint is None or availability_hint:
                         pass
                     else:
@@ -555,7 +558,7 @@ class ZeroconfService(Manageable):
             writer.close()
             await writer.wait_closed()
             return True
-        except (TimeoutError, socket.gaierror):
+        except (TimeoutError, socket.gaierror, ConnectionRefusedError):
             return False
         except Exception as e:
             logger.debug("  Unexpected ping exception: %s", e.__str__())
@@ -814,26 +817,28 @@ class AutomateControl(Control):
     async def run(self, args):
         self.prepare(args)
 
-        async with aiohttp.ClientSession(
+        async with (
+            aiohttp.ClientSession(
                 # Automate messaging server prefers closing connections
-                connector=aiohttp.TCPConnector(force_close=True)) as session:
-            async with AsyncZeroconf() as zeroconf:
-                service_cache = ServiceCache(Cache())
-                service_resolver = SftpServiceResolver(zeroconf)
-                service_listener = pFTPdServiceListener(args.server_name, service_cache)
-                service_browser = SftpServiceBrowser(zeroconf)
-                await service_browser.add_service_listener(service_listener)
+                connector=aiohttp.TCPConnector(force_close=True)) as session,
+            AsyncZeroconf() as zeroconf
+        ):
+            service_cache = ServiceCache(Cache())
+            service_resolver = SftpServiceResolver(zeroconf)
+            service_listener = pFTPdServiceListener(args.server_name, service_cache)
+            service_browser = SftpServiceBrowser(zeroconf)
+            await service_browser.add_service_listener(service_listener)
 
-                automate = Automate(Secrets(), session, args.automate_account, args.automate_device, args.automate_tokenfile)
-                local_pftpd = pFTPdZeroconf(args.server_name, service_cache, service_resolver, AutomatepFTPd(automate))
-                tailscale = Tailscale(args.tailscale[0], args.tailscale[1], AutomateTailscale(automate)) if args.tailscale else None
-                remote_pftpd = pFTPd(tailscale.host, int(args.tailscale[2]), local_pftpd.manager) if tailscale else None
-                funnel = Funnel(tailscale, args.funnel[0], int(args.funnel[1]), args.funnel[2], int(args.funnel[3])) if tailscale and args.funnel else None
+            automate = Automate(Secrets(), session, args.automate_account, args.automate_device, args.automate_tokenfile)
+            local_pftpd = pFTPdZeroconf(args.server_name, service_cache, service_resolver, AutomatepFTPdManager(automate))
+            tailscale = Tailscale(args.tailscale[0], args.tailscale[1], AutomateTailscaleManager(automate)) if args.tailscale else None
+            remote_pftpd = pFTPd(tailscale.host, int(args.tailscale[2]), local_pftpd.manager) if tailscale else None
+            funnel = Funnel(tailscale, args.funnel[0], int(args.funnel[1]), args.funnel[2], int(args.funnel[3])) if tailscale and args.funnel else None
 
-                async with Webhooks(Funnel.LOCAL_HOST, funnel.local_port) if funnel else nullcontext() as webhooks:
-                    state = AutomateState(session, webhooks, automate, funnel.external_url) if funnel and webhooks else None
-                    phone = Phone(local_pftpd, tailscale, remote_pftpd, state)
-                    await self.execute(args, phone)
+            async with Webhooks(Funnel.LOCAL_HOST, funnel.local_port) if funnel else nullcontext() as webhooks:
+                state = AutomateState(session, webhooks, automate, funnel.external_url) if funnel and webhooks else None
+                phone = Phone(local_pftpd, tailscale, remote_pftpd, state)
+                await self.execute(args, phone)
 
 async def main():
     args = None
@@ -858,7 +863,8 @@ async def main():
             else:
                 logger.error(LazyStr(repr, e))
 
-if __name__ == "__main__":
+    return logger.exitcode
+
+def run():
     with suppress(KeyboardInterrupt):
-        asyncio.run(main())
-    exit(logger.exitcode)
+        exit(asyncio.run(main()))

@@ -8,17 +8,21 @@
 
 Remote control of your phone's [Primitive FTPd Android SFTP server](https://github.com/wolpi/prim-ftpd) and optionally [Tailscale VPN](https://tailscale.com/).
 
-Though Primitive FTPd consumes minimal power when it is not used, remote start/stop can be usefull. But in case of Tailscale, it is a real battery and mobile network data drain when not used, remote start/stop is de facto very useful.
+Though Primitive FTPd consumes minimal power when it is not used, remote start/stop can be usefull for zeroconf (DNS-SD). Android doesn't reply DSN-SD queries when the screen is off, but Android announces the new service when the Primitive FTPd server starts up. So SFTP clients can/should capture and cache the announcement at Primitive FTPd server startup to connect to a phone through zeroconf even when the screen is off.
 
-With the help of this script you can sync your phone eg. with your home NAS server whereever your phone is on a WiFi network - or even on cellular. Your phone doesn't have to be on the same LAN to make zeroconf working.
+But in case of Tailscale, it is a real battery and mobile network data drain when not used, remote start/stop is de facto very useful.
+
+With the help of this script you can sync your phone with eg. your home NAS server whereever your phone is on a WiFi network - or even on cellular. Your phone doesn't have to be on the same LAN to make zeroconf working when you have alternative access through VPN.
 
 See my other project, https://github.com/lmagyar/prim-sync, for bidirectional and unidirectional sync over SFTP (multiplatform Python script optimized for the Primitive FTPd SFTP server).
+
+See my other project, https://github.com/lmagyar/prim-batch, for batch execution of prim-ctrl and prim-sync commands.
 
 **Note:** These are my first ever Python projects, any comments on how to make them better are appreciated.
 
 ## Features
 
-- Remote start/stop of Primitive FTPd Android SFTP server and Tailscale VPN
+- Remote start/stop of Primitive FTPd Android SFTP server and optionally Tailscale VPN
 - Using VPN on cellular can be refused
 - Backup states before starting them, restore when stopping (ie. they won't be stopped if they were running before the script were asked to start them)
 
@@ -26,7 +30,8 @@ See my other project, https://github.com/lmagyar/prim-sync, for bidirectional an
 
 You need to install:
 - Automate on your phone - see: https://llamalab.com/automate/
-- Python 3.12+, pip and venv - see: https://www.python.org/downloads/ or
+
+- Python 3.12+, pip and venv on your laptop - see: https://www.python.org/downloads/ or
   <details><summary>Unix</summary>
 
   ```
@@ -37,34 +42,39 @@ You need to install:
   </details>
   <details><summary>Windows</summary>
 
-  ```
-  choco install python3 -y
-  ```
+  - Install from Microsoft Store the latest [Python 3](https://apps.microsoft.com/search?query=python+3&department=Apps) (search), [Python 3.12](https://www.microsoft.com/store/productId/9NCVDN91XZQP) (App)
+  - Install from Chocolatey: `choco install python3 -y`
   </details>
-- This repo
+
+- pipx - see: https://pipx.pypa.io/stable/installation/#installing-pipx or
   <details><summary>Unix</summary>
 
   ```
-  git clone https://github.com/lmagyar/prim-ctrl
-  cd prim-ctrl
-  python3 -m venv --upgrade-deps .venv
-  source .venv/bin/activate
-  pip install -r requirements.txt
+  sudo apt install pipx
+  pipx ensurepath
   ```
   </details>
   <details><summary>Windows</summary>
 
   ```
-  git clone https://github.com/lmagyar/prim-ctrl
-  cd prim-ctrl
-  py -m venv --upgrade-deps .venv
-  .venv\Scripts\activate
-  pip install -r requirements.txt
+  py -m pip install --user pipx
+  py -m pipx ensurepath
   ```
   </details>
 
+- This repo
+  ```
+  pipx install prim-ctrl
+  ```
+
 Optionally you can install:
 - Tailscale on your phone and laptop - see: https://tailscale.com/download
+
+Optionally, if you want to edit or even contribute to the source, you also need to install:
+- poetry - see: https://python-poetry.org/
+  ```
+  pipx install poetry
+  ```
 
 ## Configuration
 
@@ -111,12 +121,28 @@ But if the script runs scheduled, we can't be sure whether the phone is on WiFi,
 Notes:
 - Even when -b option is **not** used, the script will output 'connected=(local|remote)', what you can use to determine whether to use -a option for the prim-sync script
 
+### Some example
+
+<details><summary>Unix</summary>
+
+```
+prim-ctrl Automate youraccount@gmail.com "SOME MANUFACTURER XXX" automate your-phone-pftpd --tailscale tailxxxx.ts.net your-phone 2222 --funnel your-laptop 12345 /prim-ctrl 8443 -t -i start -b
+prim-ctrl Automate youraccount@gmail.com "SOME MANUFACTURER XXX" automate your-phone-pftpd --tailscale tailxxxx.ts.net your-phone 2222 --funnel your-laptop 12345 /prim-ctrl 8443 -t -i stop -r ${PREV_STATE}
+```
+</details>
+<details><summary>Windows</summary>
+
+```
+prim-ctrl Automate youraccount@gmail.com "SOME MANUFACTURER XXXX" automate your-phone-pftpd --tailscale tailxxxx.ts.net your-phone 2222 --funnel your-laptop 12345 /prim-ctrl 8443 -t -i start -b
+prim-ctrl Automate youraccount@gmail.com "SOME MANUFACTURER XXXX" automate your-phone-pftpd --tailscale tailxxxx.ts.net your-phone 2222 --funnel your-laptop 12345 /prim-ctrl 8443 -t -i stop -r !PREV_STATE!
+```
+</details>
+
 ### Options
 
 ```
-usage: prim-ctrl.py Automate [-h] [-i {test,start,stop}] [-t] [-s] [--debug] [--tailscale tailnet remote-machine-name sftp-port] [--funnel local-machine-name local-port local-path external-port] [-ac] [-b]
-                             [-r STATE]
-                             automate-account automate-device automate-tokenfile server-name
+usage: prim-ctrl Automate [-h] [-i {test,start,stop}] [-t] [-s] [--debug] [--tailscale tailnet remote-machine-name sftp-port] [--funnel local-machine-name local-port local-path external-port] [-ac] [-b] [-r STATE]
+                          automate-account automate-device automate-tokenfile server-name
 
 Remote control of your phone's Primitive FTPd and optionally Tailscale app statuses via the Automate app, for more details see https://github.com/lmagyar/prim-ctrl
 
@@ -164,145 +190,3 @@ VPN:
   -b, --backup-state               in case of start, backup current state to stdout as single string (in case of an error, it will try to restore the original state but will not write it to stdout)
   -r STATE, --restore-state STATE  in case of stop, restore previous state from STATE (use -b to get a valid STATE string)
 ```
-
-### Some example
-
-<details><summary>Unix</summary>
-
-```
-prim-ctrl.sh Automate youraccount@gmail.com "SOME MANUFACTURER XXX" automate a-unique-server-name --tailscale tailxxxx.ts.net your-phone 2222 --funnel your-laptop 12345 /prim-ctrl 8443 -t -i start -b
-prim-ctrl.sh Automate youraccount@gmail.com "SOME MANUFACTURER XXX" automate a-unique-server-name --tailscale tailxxxx.ts.net your-phone 2222 --funnel your-laptop 12345 /prim-ctrl 8443 -t -i stop -r ${PREV_STATE}
-```
-</details>
-<details><summary>Windows</summary>
-
-```
-prim-ctrl.cmd Automate youraccount@gmail.com "SOME MANUFACTURER XXXX" automate a-unique-server-name --tailscale tailxxxx.ts.net your-phone 2222 --funnel your-laptop 12345 /prim-ctrl 8443 -t -i start -b
-prim-ctrl.cmd Automate youraccount@gmail.com "SOME MANUFACTURER XXXX" automate a-unique-server-name --tailscale tailxxxx.ts.net your-phone 2222 --funnel your-laptop 12345 /prim-ctrl 8443 -t -i stop -r !PREV_STATE!
-```
-</details>
-
-### Elaborate example on how to use it together with the prim-sync script
-
-Unix (under construction...)
-
-<details><summary>Windows</summary>
-
-Tested on Windows 11:
-
-```
-@echo off
-setlocal EnableDelayedExpansion EnableExtensions
-
-rem This script can be called:
-rem - without arguments: it syncs all the folders and pause
-rem - with one of the folders' name as argument: it syncs only that folder and pause
-rem - with "scheduled" as argument: it syncs all the folders without pause and with less log messages, but with some extra log lines that are practical when the output is appended to a log file
-rem Additionally any prim-sync options (starting with "-") can be added after the above arguments, they will be passed to the prim-sync command.
-
-set ctrl_args=Automate youraccount@gmail.com "SOME MANUFACTURER XXXX" automate a-unique-server-name --tailscale tailxxxx.ts.net your-phone 2222 --funnel your-laptop 12345 /prim-ctrl 8443 -t
-set sync_args=a-unique-server-name id_ed25519_sftp -t -sh -rs "/fs/storage/emulated/0" --ignore-locks 360
-set sync_args_vpn=-a your-phone.tailxxxx.ts.net 2222
-set sync_args_mirror_out=-uo -m --overwrite-destination
-
-set arg1=%1
-
-if "!arg1!"=="scheduled" (
-    for /F "usebackq tokens=1,2 delims==" %%i in (`wmic os get LocalDateTime /VALUE 2^>NUL`) do if '.%%i.'=='.LocalDateTime.' set ldt=%%j
-    set timestamp=!ldt:~0,4!-!ldt:~4,2!-!ldt:~6,2! !ldt:~8,2!:!ldt:~10,2!:!ldt:~12,6!
-    echo !timestamp! = STARTED = %~nx0 %*
-)
-
-rem ----------------------------------------
-
-rem handle arguments
-if "!arg1!"=="scheduled" (
-    set ctrl_args=!ctrl_args! -s
-    set sync_args=!sync_args! -ss
-    shift /1
-) else if not "!arg1:~0,1!"=="-" (
-    set folder_to_sync=!arg1!
-    shift /1
-)
-if "!folder_to_sync!"=="" set folder_to_sync=all
-set sync_args=!sync_args! %1 %2 %3 %4 %5 %6 %7 %8 %9
-
-rem this testing is useful when as a scheduled task is executed after an awake and networking is not ready yet
-rem it is approx 10 minutes
-set cnt=120
-:testnetworking
-ping -n 1 1.1.1.1 | find "TTL=" >nul
-if errorlevel 1 (
-    set /a cnt-=1
-    if not "!cnt!"=="0" (
-        timeout 2 /nobreak >nul
-        goto :testnetworking
-    )
-    for /F "usebackq tokens=1,2 delims==" %%i in (`wmic os get LocalDateTime /VALUE 2^>NUL`) do if '.%%i.'=='.LocalDateTime.' set ldt=%%j
-    set timestamp=!ldt:~0,4!-!ldt:~4,2!-!ldt:~6,2! !ldt:~8,2!:!ldt:~10,2!:!ldt:~12,6!
-    echo !timestamp! %~nx0: ERROR: Networking is down
-) else (
-    rem these 2 lines prevent parallel execution by locking the lock file, file descriptor 3 is not used, so nothing is written to the lock file
-    2>nul (
-        3>%~dp0SyncWithMobile.lock 2>&1 (
-            rem stores stdout in a variable (the braindead way of windows cli)
-            for /f "usebackq tokens=*" %%s in (`call C:\...\prim-ctrl\prim-ctrl.cmd !ctrl_args! -i start -b`) do set PREV_STATE=%%s
-            rem use response on stdout, errorlevel will be messed up by the for command
-            if not "!PREV_STATE!" == "" (
-                echo "!PREV_STATE!" | find "connected=remote" >NUL
-                if not errorlevel 1 set sync_args=!sync_args! !sync_args_vpn!
-
-                for %%a in (all Music) do if "!folder_to_sync!"=="%%a" call C:\...\prim-sync\prim-sync.cmd !sync_args! !sync_args_mirror_out! "D:\Mobile" "/fs/storage/XXXX-XXXX" "/saf" "Music" "*"
-                for %%a in (all Camera) do if "!folder_to_sync!"=="%%a" call C:\...\prim-sync\prim-sync.cmd !sync_args! "D:\Mobile" "/fs/storage/XXXX-XXXX" "/saf" "Camera" "DCIM/Camera"
-                for %%a in (all Screenshots) do if "!folder_to_sync!"=="%%a" call C:\...\prim-sync\prim-sync.cmd !sync_args! "D:\Mobile" "/fs/storage/emulated/0" "*" "Screenshots" "DCIM/Screenshots"
-
-                call C:\...\prim-ctrl\prim-ctrl.cmd !ctrl_args! -i stop -r !PREV_STATE!
-            )
-            rem set errorlevel to 0
-            ver > nul
-        ) || (
-            rem locking failed
-            for /F "usebackq tokens=1,2 delims==" %%i in (`wmic os get LocalDateTime /VALUE 2^>NUL`) do if '.%%i.'=='.LocalDateTime.' set ldt=%%j
-            set timestamp=!ldt:~0,4!-!ldt:~4,2!-!ldt:~6,2! !ldt:~8,2!:!ldt:~10,2!:!ldt:~12,6!
-            echo !timestamp! %~nx0: ERROR: Already running
-        )
-    )
-)
-
-rem ----------------------------------------
-
-if "!arg1!"=="scheduled" (
-    for /F "usebackq tokens=1,2 delims==" %%i in (`wmic os get LocalDateTime /VALUE 2^>NUL`) do if '.%%i.'=='.LocalDateTime.' set ldt=%%j
-    set timestamp=!ldt:~0,4!-!ldt:~4,2!-!ldt:~6,2! !ldt:~8,2!:!ldt:~10,2!:!ldt:~12,6!
-    echo !timestamp! = STOPPED = %~nx0 %*
-)
-
-if not "!arg1!"=="scheduled" pause
-```
-
-You can schedule a Task Scheduler task with a "Start a program" action with the below parameters to start the above scrpit:
-- Command: `C:\Windows\System32\StartMinimized.vbs`
-- Arguments: `"title=Scheduled SyncWithMobile" C:\Windows\System32\cmd.exe /C C:\...\SyncWithMobile.cmd scheduled ^>^> C:\Temp\SyncWithMobile.log 2^>^&1`
-
-Where the StartMinimized.vbs script is to start the script in a minimized window without any pop-up (this is a general script that is useful to start anything minimized from Task Scheduler):
-
-```
-Dim start, title
-If(WScript.Arguments.Count >= 1 And Left(WScript.Arguments(0), 6) = "title=") Then
-  start = 1
-  title = Mid(WScript.Arguments(0), 7)
-Else
-  start = 0
-  title = "Command Prompt"
-End If
-ReDim args(WScript.Arguments.Count - 1 - start)
-For i = start To WScript.Arguments.Count - 1
-  If InStr(WScript.Arguments(i), " ") > 0 Then
-    args(i - start) = """" + WScript.Arguments(i) + """"
-  Else
-    args(i - start) = WScript.Arguments(i)
-  End If
-Next
-CreateObject("Wscript.Shell").Run "C:\Windows\System32\cmd.exe /c start """ & title & """ /min " & Join(args, " "), 0, False
-```
-</details>
