@@ -1,5 +1,9 @@
 # Changelog
 
+## vNext
+
+- Update dependencies
+
 ## 0.3.0
 
 - Publish on PyPI
