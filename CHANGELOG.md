@@ -1,6 +1,6 @@
 # Changelog
 
-## vNext
+## 0.4.0
 
 - Update dependencies
 
