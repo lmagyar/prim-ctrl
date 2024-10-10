@@ -1,5 +1,9 @@
 # Changelog
 
+## vNext
+
+- Update Python installation in Readme
+
 ## 0.4.0
 
 - Update dependencies
