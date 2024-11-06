@@ -3,6 +3,7 @@
 ## vNext
 
 - Update Python installation in Readme
+- Mention in the error message to check that the Automate flow is running
 
 ## 0.4.0
 
