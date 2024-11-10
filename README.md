@@ -2,11 +2,6 @@
 > [!CAUTION]
 > ***This branch is in alpha***
 
-> [!WARNING]
-> ***This repository works with both the original and the forked version of the Primitive FTPd Android SFTP server!***
-> - ***install my fork from https://github.com/lmagyar/prim-ftpd - and use the prim-ctrl-lmagyar Automate flow below***
-> - ***install the original version from https://github.com/wolpi/prim-ftpd - and use the prim-ctrl Automate flow below***
-
 # Primitive Ctrl
 
 Remote control of your phone's [Primitive FTPd Android SFTP server](https://github.com/wolpi/prim-ftpd) and optionally [Tailscale VPN](https://tailscale.com/).
@@ -84,9 +79,7 @@ Optionally, if you want to edit or even contribute to the source, you also need 
 
 ### Automate
 
-- Depending on whether you installed the [forked](https://github.com/lmagyar/prim-ftpd) or the [original](https://github.com/wolpi/prim-ftpd) version of Primitive FTPd, download the appropriate Automate flow to your phone:
-  - Flow for the **forked** Primitive FTPd: https://raw.githubusercontent.com/lmagyar/prim-ctrl/main/res/prim-ctrl-lmagyar.flo (see [image](https://raw.githubusercontent.com/lmagyar/prim-ctrl/main/res/prim-ctrl-lmagyar.png) of the flow)
-  - Flow for the **original** Primitive FTPd: https://raw.githubusercontent.com/lmagyar/prim-ctrl/main/res/prim-ctrl.flo (see [image](https://raw.githubusercontent.com/lmagyar/prim-ctrl/main/res/prim-ctrl.png) of the flow)
+- Download the https://raw.githubusercontent.com/lmagyar/prim-ctrl/main/res/prim-ctrl.flo Automate flow to your phone (see [image](https://raw.githubusercontent.com/lmagyar/prim-ctrl/main/res/prim-ctrl.png) of the flow)
 - Import it with the ... menu / Import command
 - Enable all privileges
 - Click on the flow, edit the 2. block ("Set variable google_account to...), enter your Google account and press Save
