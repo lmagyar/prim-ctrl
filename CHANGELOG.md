@@ -5,6 +5,7 @@
 - Update Python installation in Readme
 - Mention in the error message to check that the Automate flow is running
 - Do not mention my forked prim-ftpd, PR-s got merged in the original repo
+- Update dependencies
 
 ## 0.4.0
 
