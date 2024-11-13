@@ -1,6 +1,6 @@
 # Changelog
 
-## vNext
+## 0.5.0
 
 - Update Python installation in Readme
 - Mention in the error message to check that the Automate flow is running
