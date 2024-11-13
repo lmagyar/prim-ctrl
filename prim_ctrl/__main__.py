@@ -407,7 +407,7 @@ class AutomateState(State):
                     except TimeoutError:
                         pass
         except TimeoutError as e:
-            e.add_note(f"Can't get value of {AutomateState.VARIABLE_STATE} for {timeout} seconds")
+            e.add_note(f"Can't get value of {AutomateState.VARIABLE_STATE} for {timeout} seconds - please check on your phone in the Automate app, that the prim-ctrl flow is running")
             raise
         finally:
             self.webhooks.unsubscribe_variable(AutomateState.VARIABLE_STATE)

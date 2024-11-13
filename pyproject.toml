@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "prim-ctrl"
-version = "0.4.0"
+version = "0.5.0"
 description = "Primitive Ctrl - Remote control of your phone's Primitive FTPd Android SFTP server and optionally Tailscale VPN."
 license = "Apache-2.0"
 authors = ["Laszlo Magyar <lmagyar1973@gmail.com>"]
@@ -18,9 +18,9 @@ packages = [{include = "prim_ctrl"}]
 
 [tool.poetry.dependencies]
 python = "^3.12"
-aiohttp = "^3.10.5"
+aiohttp = "^3.11.0"
 platformdirs = "^4.3.6"
-zeroconf = "^0.134.0"
+zeroconf = "^0.136.0"
 
 [tool.poetry.scripts]
 prim-ctrl = "prim_ctrl.__main__:run"
