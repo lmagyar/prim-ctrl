@@ -30,7 +30,7 @@ You need to install:
 - Automate on your phone - see: https://llamalab.com/automate/
 
 - Python 3.12+, pip and venv on your laptop - see: https://www.python.org/downloads/ or
-  <details><summary>Unix</summary>
+  <details><summary>Ubuntu</summary>
 
   ```
   sudo apt update
@@ -46,7 +46,7 @@ You need to install:
   </details>
 
 - pipx - see: https://pipx.pypa.io/stable/installation/#installing-pipx or
-  <details><summary>Unix</summary>
+  <details><summary>Ubuntu</summary>
 
   ```
   sudo apt install pipx
@@ -120,7 +120,7 @@ Notes:
 
 ### Some example
 
-<details><summary>Unix</summary>
+<details><summary>Ubuntu</summary>
 
 ```
 prim-ctrl Automate youraccount@gmail.com "SOME MANUFACTURER XXX" automate your-phone-pftpd --tailscale tailxxxx.ts.net your-phone 2222 --funnel your-laptop 12345 /prim-ctrl 8443 -t -i start -b
