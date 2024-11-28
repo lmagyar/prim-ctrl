@@ -8,7 +8,7 @@ Remote control of your phone's [Primitive FTPd Android SFTP server](https://gith
 
 Though Primitive FTPd consumes minimal power when it is not used, remote start/stop can be usefull for zeroconf (DNS-SD). Android doesn't reply DSN-SD queries when the screen is off, but Android announces the new service when the Primitive FTPd server starts up. So SFTP clients can/should capture and cache the announcement at Primitive FTPd server startup to connect to a phone through zeroconf even when the screen is off.
 
-But in case of Tailscale, it is a real battery and mobile network data drain when not used, remote start/stop is de facto very useful.
+But in case of Tailscale, it is a real battery and mobile network data drain when not used, local and remote start/stop is de facto very useful.
 
 With the help of this script you can sync your phone with eg. your home NAS server whereever your phone is on a WiFi network - or even on cellular. Your phone doesn't have to be on the same LAN to make zeroconf working when you have alternative access through VPN.
 
@@ -20,9 +20,9 @@ See my other project, https://github.com/lmagyar/prim-batch, for batch execution
 
 ## Features
 
-- Remote start/stop of Primitive FTPd Android SFTP server and optionally Tailscale VPN
+- Remote start/stop of Primitive FTPd Android SFTP server and optionally local and remote start/stop of Tailscale VPN
 - Using VPN on cellular can be refused
-- Backup states before starting them, restore when stopping (ie. they won't be stopped if they were running before the script were asked to start them)
+- Backup sftp server and VPN states before starting them, restore when stopping (ie. they won't be stopped if they were running before the script were asked to start them)
 
 ## Installation
 
@@ -144,7 +144,7 @@ usage: prim-ctrl Automate [-h] [-i {test,start,stop}] [-t] [-s] [--debug] [--tai
 Remote control of your phone's Primitive FTPd and optionally Tailscale app statuses via the Automate app, for more details see https://github.com/lmagyar/prim-ctrl
 
 Note: you must install Automate app on your phone, download prim-ctrl flow into it, and configure your Google account in the flow to receive messages (see the project's GitHub page for more details)
-Note: optionally if your phone is not accessible on local network but your laptop is part of the Tailscale VPN then Tailscale VPN can be started on the phone
+Note: optionally if your phone is not accessible on local network but your laptop and phone is part of the Tailscale VPN then Tailscale VPN can be started on the phone
 Note: optionally if your laptop is accessible through Tailscale Funnel then VPN on cellular can be refused and app statuses on the phone can be backed up and restored
 
 Output: even when -b option is not used, the script will output 'connected=(local|remote)', what you can use to determine whether to use -a option for the prim-sync script
