@@ -1,6 +1,6 @@
 # Changelog
 
-## vNext
+## 0.6.0
 
 - Start/stop local tailscale also
 
