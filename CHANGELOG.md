@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.6.0
+
+- Start/stop local tailscale also
+
 ## 0.5.0
 
 - Update Python installation in Readme
