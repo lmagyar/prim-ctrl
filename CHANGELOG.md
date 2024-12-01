@@ -1,6 +1,6 @@
 # Changelog
 
-## vNext
+## 0.6.1
 
 - Stop local Tailscale on error
 - Fix wait for local Tailscale
