@@ -1,8 +1,14 @@
 # Changelog
 
+## 0.6.1
+
+- Stop local Tailscale on error
+- Fix wait for local Tailscale
+- Refactor exception logging
+
 ## 0.6.0
 
-- Start/stop local tailscale also
+- Start/stop local Tailscale also
 
 ## 0.5.0
 
