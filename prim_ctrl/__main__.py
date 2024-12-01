@@ -180,8 +180,11 @@ class Pingable:
         logger.debug("Waiting for %s to be %s (timeout is %ds)", LazyStr(self.get_class_name), LazyStr(Pingable.get_state_name, available), int(timeout))
         async with asyncio.timeout(timeout):
             while await self.ping(available) != available:
-                if not available:
-                    await asyncio.sleep(1)
+                await self._sleep_while_wait(available)
+
+    async def _sleep_while_wait(self, available: bool):
+        if not available:
+            await asyncio.sleep(1)
 
 class Manager:
     @abstractmethod
@@ -661,6 +664,9 @@ class LocalTailscale(Manageable):
     async def ping(self, availability_hint: bool | None = None):
         logger.debug("Pinging %s", LazyStr(self.get_class_name))
         return await async_tailscale_is_online()
+
+    async def _sleep_while_wait(self, available: bool):
+        await asyncio.sleep(0.250)
 
 ########
 

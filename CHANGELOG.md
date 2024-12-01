@@ -2,6 +2,7 @@
 
 ## vNext
 
+- Fix wait for local Tailscale
 - Refactor exception logging
 
 ## 0.6.0
