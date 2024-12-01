@@ -2,6 +2,7 @@
 
 ## vNext
 
+- Stop local Tailscale on error
 - Fix wait for local Tailscale
 - Refactor exception logging
 

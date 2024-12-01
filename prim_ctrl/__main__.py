@@ -730,18 +730,30 @@ class Control:
             raise ValueError("The --restore-state option can be enabled only for the stop intent")
 
     async def execute(self, args, local: Local, phone: Phone):
-        async def _stop(restore_state: dict | None):
+        async def _stop(restore_state: dict | None, stop_only_started: bool = False):
             if local.vpn and phone.vpn and phone.remote_sftp and await local.vpn.test() and await phone.vpn.test():
-                if (restore_state is None or not restore_state.get(Control.PHONE_SFTP, False)) and await phone.remote_sftp.test():
-                    await phone.remote_sftp.stop(10, 30)
-                if restore_state is None or not restore_state.get(Control.PHONE_VPN, False):
-                    await phone.vpn.stop(10, 60)
+                if (restore_state is None or not restore_state.get(Control.PHONE_SFTP, stop_only_started)) and await phone.remote_sftp.test():
+                    try:
+                        await phone.remote_sftp.stop(10, 30)
+                    except Exception as e:
+                        logger.exception_or_error(e, args)
+                if restore_state is None or not restore_state.get(Control.PHONE_VPN, stop_only_started):
+                    try:
+                        await phone.vpn.stop(10, 60)
+                    except Exception as e:
+                        logger.exception_or_error(e, args)
             else:
-                if (restore_state is None or not restore_state.get(Control.PHONE_SFTP, False)):
-                    await phone.zeroconf_sftp.stop(10, 30)
+                if (restore_state is None or not restore_state.get(Control.PHONE_SFTP, stop_only_started)):
+                    try:
+                        await phone.zeroconf_sftp.stop(10, 30)
+                    except Exception as e:
+                        logger.exception_or_error(e, args)
             if local.vpn:
-                if restore_state is None or not restore_state.get(Control.LOCAL_VPN, False):
-                    await local.vpn.stop(10, 30)
+                if restore_state is None or not restore_state.get(Control.LOCAL_VPN, stop_only_started):
+                    try:
+                        await local.vpn.stop(10, 30)
+                    except Exception as e:
+                        logger.exception_or_error(e, args)
         match args.intent:
             case 'test':
                 if local.vpn and phone.vpn and phone.remote_sftp and phone.state:
@@ -754,29 +766,31 @@ class Control:
             case 'start':
                 if local.vpn and phone.vpn and phone.remote_sftp:
                     state = dict()
-                    zeroconf_accessible = False
-                    remote_accessible = False
-
-                    # gather local state info
-                    local_vpn_state = await local.vpn.test()
-                    state[Control.LOCAL_VPN] = local_vpn_state
-                    # start changing local state - we need a local vpn to be able to access the state of the remote vpn and optionally the phone
-                    await local.vpn.start(10, 30)
-
-                    # gather remote state info
-                    if phone.state:
-                        phone_state, phone_vpn_state = await gather_with_taskgroup(phone.state.get(10, 30), phone.vpn.test())
-                        state[Control.PHONE_WIFI] = phone_state[PhoneState.WIFI]
-                        state[Control.PHONE_VPN] = phone_vpn_state
-                        state[Control.PHONE_SFTP] = phone_state[PhoneState.PFTPD]
-                        if not state[Control.PHONE_WIFI] and not args.accept_cellular:
-                            raise RuntimeError(f"Phone is not on Wi-Fi network")
-                    else:
-                        state[Control.PHONE_VPN] = await phone.vpn.test()
-                        if state[Control.PHONE_VPN]:
-                            state[Control.PHONE_SFTP] = remote_accessible = await phone.remote_sftp.test()
-                    # start changing remote state
                     try:
+                        # gather local state info
+                        local_vpn_state = await local.vpn.test()
+                        state[Control.LOCAL_VPN] = local_vpn_state
+
+                        # start changing local state - we need a local vpn to be able to access the state of the remote vpn and optionally the phone
+                        await local.vpn.start(10, 30)
+
+                        zeroconf_accessible = False
+                        remote_accessible = False
+
+                        # gather phone state info
+                        if phone.state:
+                            phone_state, phone_vpn_state = await gather_with_taskgroup(phone.state.get(10, 30), phone.vpn.test())
+                            state[Control.PHONE_WIFI] = phone_state[PhoneState.WIFI]
+                            state[Control.PHONE_VPN] = phone_vpn_state
+                            state[Control.PHONE_SFTP] = phone_state[PhoneState.PFTPD]
+                            if not state[Control.PHONE_WIFI] and not args.accept_cellular:
+                                raise RuntimeError(f"Phone is not on Wi-Fi network")
+                        else:
+                            state[Control.PHONE_VPN] = await phone.vpn.test()
+                            if state[Control.PHONE_VPN]:
+                                state[Control.PHONE_SFTP] = remote_accessible = await phone.remote_sftp.test()
+
+                        # start changing phone state
                         if phone.state:
                             if not state[Control.PHONE_SFTP]:
                                 if not state[Control.PHONE_VPN]:
@@ -814,20 +828,22 @@ class Control:
                                 zeroconf_accessible = await phone.zeroconf_sftp.test()
                         if not zeroconf_accessible and not remote_accessible:
                             raise RuntimeError(f"Even when {phone.vpn.get_class_name()} and {phone.remote_sftp.get_class_name()} is started, {phone.remote_sftp.get_class_name()} is still not accessible")
+
+                        # print out result on stdout
+                        if not args.backup_state:
+                            state = dict()
+                        state[Control.CONNECTED] = Control.ZEROCONF if zeroconf_accessible else Control.REMOTE
+                        print(StateSerializer.dumps(state))
                     except:
-                        await _stop(state)
+                        await _stop(state, stop_only_started = True)
                         raise
-                    if not args.backup_state:
-                        state = dict()
-                    state[Control.CONNECTED] = Control.ZEROCONF if zeroconf_accessible else Control.REMOTE
-                    print(StateSerializer.dumps(state))
                 else:
-                    if not await phone.zeroconf_sftp.test():
-                        try:
+                    try:
+                        if not await phone.zeroconf_sftp.test():
                             await phone.zeroconf_sftp.start(10, 30)
-                        except:
-                            await _stop(None)
-                            raise
+                    except:
+                        await _stop(None)
+                        raise
             case 'stop':
                 await _stop(StateSerializer.loads(args.restore_state) if args.restore_state else None)
 
