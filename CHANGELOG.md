@@ -1,8 +1,12 @@
 # Changelog
 
+## vNext
+
+- Refactor exception logging
+
 ## 0.6.0
 
-- Start/stop local tailscale also
+- Start/stop local Tailscale also
 
 ## 0.5.0
 
