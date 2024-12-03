@@ -99,50 +99,43 @@ logger = Logger(Path(sys.argv[0]).name)
 
 ########
 
-# based on https://stackoverflow.com/a/55656177/2755656
-def sync_ping(host, packets: int = 1, timeout: float = 1):
-    if platform.system().lower() == 'windows':
-        command = ['ping', '-n', str(packets), '-w', str(int(timeout*1000)), host]
-        # don't use text=True, the async version will raise ValueError("text must be False"), who knows why
-        result = subprocess.run(command, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, creationflags=subprocess.CREATE_NO_WINDOW)
-        return result.returncode == 0 and b'TTL=' in result.stdout
-    else:
-        command = ['ping', '-c', str(packets), '-W', str(int(timeout)), host]
-        result = subprocess.run(command, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        return result.returncode == 0
+class Subprocess:
 
-async def async_ping(host, packets: int = 1, timeout: float = 1):
-    if platform.system().lower() == 'windows':
-        command = ['ping', '-n', str(packets), '-w', str(int(timeout*1000)), host]
-        # don't use text=True, the async version will raise ValueError("text must be False"), who knows why
-        proc = await asyncio.create_subprocess_exec(*command, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, creationflags=subprocess.CREATE_NO_WINDOW)
+    # based on https://stackoverflow.com/a/55656177/2755656
+    @staticmethod
+    def sync_ping(host, packets: int = 1, timeout: float = 1):
+        if platform.system().lower() == 'windows':
+            command = ['ping', '-n', str(packets), '-w', str(int(timeout*1000)), host]
+            # don't use text=True, the async version will raise ValueError("text must be False"), who knows why
+            result = subprocess.run(command, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, creationflags=subprocess.CREATE_NO_WINDOW)
+            return result.returncode == 0 and b'TTL=' in result.stdout
+        else:
+            command = ['ping', '-c', str(packets), '-W', str(int(timeout)), host]
+            result = subprocess.run(command, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            return result.returncode == 0
+
+    @staticmethod
+    async def async_ping(host, packets: int = 1, timeout: float = 1):
+        if platform.system().lower() == 'windows':
+            command = ['ping', '-n', str(packets), '-w', str(int(timeout*1000)), host]
+            # don't use text=True, the async version will raise ValueError("text must be False"), who knows why
+            proc = await asyncio.create_subprocess_exec(*command, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, creationflags=subprocess.CREATE_NO_WINDOW)
+            stdout, _stderr = await proc.communicate()
+            return proc.returncode == 0 and b'TTL=' in stdout
+        else:
+            command = ['ping', '-c', str(packets), '-W', str(int(timeout)), host]
+            proc = await asyncio.create_subprocess_exec(*command, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            _stdout, _stderr = await proc.communicate()
+            return proc.returncode == 0
+
+    @staticmethod
+    async def async_tailscale(args: list[str]):
+        command = ['tailscale']
+        command.extend(args)
+        creationflags = subprocess.CREATE_NO_WINDOW if platform.system().lower() == 'windows' else 0
+        proc = await asyncio.create_subprocess_exec(*command, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, creationflags=creationflags)
         stdout, _stderr = await proc.communicate()
-        return proc.returncode == 0 and b'TTL=' in stdout
-    else:
-        command = ['ping', '-c', str(packets), '-W', str(int(timeout)), host]
-        proc = await asyncio.create_subprocess_exec(*command, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        _stdout, _stderr = await proc.communicate()
-        return proc.returncode == 0
-
-async def async_tailscale(args: list[str]):
-    command = ['tailscale']
-    command.extend(args)
-    creationflags = subprocess.CREATE_NO_WINDOW if platform.system().lower() == 'windows' else 0
-    proc = await asyncio.create_subprocess_exec(*command, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, creationflags=creationflags)
-    stdout, _stderr = await proc.communicate()
-    return proc.returncode == 0, stdout
-
-async def async_tailscale_up():
-    return (await async_tailscale(['up']))[0]
-
-async def async_tailscale_down():
-    return (await async_tailscale(['down']))[0]
-
-async def async_tailscale_is_online():
-    success, stdout = await async_tailscale(['status', '--json', '--peers=false', '--self=true'])
-    if success:
-        status = json.loads(stdout)
-    return success and status['BackendState'] == 'Running' and status['Self']['Online']
+        return proc.returncode == 0, stdout
 
 ########
 
@@ -265,7 +258,7 @@ class Device(Manageable):
 
     async def ping(self, availability_hint: bool | None = None):
         logger.debug("Pinging %s (%s)", LazyStr(self.get_class_name), self.host)
-        return await async_ping(self.host, timeout=2)
+        return await Subprocess.async_ping(self.host, timeout=2)
 
 class StateSerializer:
     BOOL = {False: Pingable.get_state_name(False), True: Pingable.get_state_name(True)}
@@ -651,10 +644,12 @@ class Local:
 
 class LocalTailscaleManager(Manager):
     async def start(self):
-        await async_tailscale_up()
+        if not (await Subprocess.async_tailscale(['up']))[0]:
+            raise RuntimeError("Failed to start up local Tailscale")
 
     async def stop(self):
-        await async_tailscale_down()
+        if not (await Subprocess.async_tailscale(['down']))[0]:
+            raise RuntimeError("Failed to shut down local Tailscale")
 
 class LocalTailscale(Manageable):
     def __init__(self):
@@ -663,7 +658,10 @@ class LocalTailscale(Manageable):
 
     async def ping(self, availability_hint: bool | None = None):
         logger.debug("Pinging %s", LazyStr(self.get_class_name))
-        return await async_tailscale_is_online()
+        success, stdout = await Subprocess.async_tailscale(['status', '--json', '--peers=false', '--self=true'])
+        if success:
+            status = json.loads(stdout)
+        return success and status['BackendState'] == 'Running' and status['Self']['Online']
 
     async def _sleep_while_wait(self, available: bool):
         await asyncio.sleep(0.250)
