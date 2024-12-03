@@ -16,8 +16,8 @@ from pathlib import Path
 from typing import Dict
 
 import aiohttp
-from aiohttp import ClientTimeout, web
 import dns.resolver
+from aiohttp import ClientTimeout, web
 from platformdirs import user_cache_dir
 from zeroconf import Zeroconf, ServiceInfo, ServiceListener as ZeroconfServiceListener
 from zeroconf.asyncio import AsyncZeroconf
