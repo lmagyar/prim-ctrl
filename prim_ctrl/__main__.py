@@ -17,6 +17,7 @@ from typing import Dict
 
 import aiohttp
 from aiohttp import ClientTimeout, web
+import dns.resolver
 from platformdirs import user_cache_dir
 from zeroconf import Zeroconf, ServiceInfo, ServiceListener as ZeroconfServiceListener
 from zeroconf.asyncio import AsyncZeroconf
@@ -294,153 +295,6 @@ class PhoneState:
 
 ########
 
-class Webhooks:
-    PING_PATH = 'ping'
-    VARIABLE_PATH = 'variable'
-
-    def __init__(self, host: str, port: int):
-        self.host = host
-        self.port = port
-        self.variables = dict[str, asyncio.Queue[str]]()
-
-    @staticmethod
-    def get_ping_path():
-        return f'/{Webhooks.PING_PATH}'
-
-    @staticmethod
-    def get_variable_path(variable: str):
-        return f'/{Webhooks.VARIABLE_PATH}/{variable}'
-
-    async def _start(self):
-        async def _ping(request: web.Request):
-            return web.Response(text='pong')
-        async def _receive_variable(request: web.Request):
-            queue = self.variables.get(request.match_info['name'])
-            if queue:
-                with suppress(asyncio.QueueFull):
-                    queue.put_nowait(await request.text())
-            return web.Response(text='OK')
-        app = web.Application()
-        app.add_routes([
-            web.get(f'/{Webhooks.PING_PATH}', _ping),
-            web.post(f'/{Webhooks.VARIABLE_PATH}' + r'/{name}', _receive_variable)])
-        self.runner = web.AppRunner(app)
-        await self.runner.setup()
-        self.site = web.TCPSite(self.runner, host=self.host, port=self.port)
-        await self.site.start()
-
-    async def _stop(self):
-        await self.runner.cleanup()
-
-    def subscribe_variable(self, variable: str):
-        if variable not in self.variables:
-            self.variables[variable] = asyncio.Queue[str](maxsize=16)
-
-    def unsubscribe_variable(self, variable: str):
-        self.variables.pop(variable)
-
-    async def get_variable(self, variable: str, timeout: float):
-        queue = self.variables.get(variable)
-        if not queue:
-            raise ValueError(f"The {variable} is unknown")
-        try:
-            async with asyncio.timeout(timeout):
-                return await queue.get()
-        except TimeoutError as e:
-            e.add_note(f"Can't get value of {variable} for {timeout} seconds")
-            raise
-
-    def __enter__(self):
-        raise TypeError("Use async with instead")
-    def __exit__(self, exc_type, exc_value, exc_tb):
-        pass
-    async def __aenter__(self):
-        await self._start()
-        return self
-    async def __aexit__(self, exc_type, exc_value, exc_tb):
-        await self._stop()
-
-class Automate:
-    def __init__(self, secrets: Secrets, session: aiohttp.ClientSession, account: str, device: str, tokenfile: str):
-        self.session = session
-        self.account = account
-        self.device = device
-        self.secret = secrets.get(tokenfile)
-
-    async def send_message(self, message: str):
-        data = {
-            "secret": self.secret,
-            "to": self.account,
-            "device": self.device,
-            "priority": "high",
-            "payload": f"prim-ctrl;{time.time()};" + message
-        }
-        logger.debug("Messaging Automate with: %s", message)
-        async with self.session.post(f'https://llamalab.com/automate/cloud/message', json=data) as response:
-            await response.text()
-
-class AutomatepFTPdManager(Manager):
-    def __init__(self, automate: Automate):
-        self.automate = automate
-
-    async def start(self):
-        await self.automate.send_message('start-pftpd')
-
-    async def stop(self):
-        await self.automate.send_message('stop-pftpd')
-
-class AutomateTailscaleManager(Manager):
-    def __init__(self, automate: Automate):
-        self.automate = automate
-
-    async def start(self):
-        await self.automate.send_message('start-tailscale')
-
-    async def stop(self):
-        await self.automate.send_message('stop-tailscale')
-
-class AutomatePhoneState(PhoneState):
-    VARIABLE_STATE = 'state'
-
-    def __init__(self, session: aiohttp.ClientSession, webhooks: Webhooks, automate: Automate, external_url: str):
-        self.session = session
-        self.webhooks = webhooks
-        self.automate = automate
-        self.external_url = external_url
-
-    async def get(self, repeat: float, timeout: float):
-        logger.info("Getting Phone state...")
-        # first test funnel + webhooks availability, to not wait for a reply if local tailscale or funnel is down
-        # though it will be routed locally, it will not go out to Tailscale's TCP forwarder servers, so the route is different from what Automate will see
-        logger.debug("Testing funnel with pinging local webhook (timeout is %ds)", int(timeout))
-        try:
-            async with self.session.get(f'{self.external_url}{Webhooks.get_ping_path()}', timeout=ClientTimeout(total=timeout)) as response:
-                if await response.text() != 'pong':
-                    raise Exception()
-        except:
-            raise RuntimeError(f"Local Tailscale is down or local Funnel is not configured properly for {self.external_url}")
-        # get state
-        logger.debug("Getting Phone state (repeat after %ds, timeout is %ds)", int(repeat), int(timeout))
-        self.webhooks.subscribe_variable(AutomatePhoneState.VARIABLE_STATE)
-        try:
-            async with asyncio.timeout(timeout):
-                while True:
-                    try:
-                        await self.automate.send_message(f'get-state;{self.external_url}{Webhooks.get_variable_path(AutomatePhoneState.VARIABLE_STATE)}')
-                        state = await self.webhooks.get_variable(AutomatePhoneState.VARIABLE_STATE, min(repeat, timeout))
-                        break
-                    except TimeoutError:
-                        pass
-        except TimeoutError as e:
-            e.add_note(f"Can't get value of {AutomatePhoneState.VARIABLE_STATE} for {timeout} seconds - please check on your phone in the Automate app, that the prim-ctrl flow is running")
-            raise
-        finally:
-            self.webhooks.unsubscribe_variable(AutomatePhoneState.VARIABLE_STATE)
-        logger.info("Phone state is %s", state)
-        return StateSerializer.loads(state)
-
-########
-
 class Cache:
     PRIM_SYNC_APP_NAME = 'prim-sync'
 
@@ -629,13 +483,6 @@ class RemoteTailscale(Device):
         self.tailnet = tailnet
         self.__qualname__ = "Remote Tailscale"
 
-class Funnel:
-    LOCAL_HOST = '127.0.0.1'
-
-    def __init__(self, tailscale: RemoteTailscale, machine_name: str, local_port: int, local_path: str, external_port: int):
-        self.local_port = local_port
-        self.external_url = f'https://{machine_name}.{tailscale.tailnet}:{external_port}{local_path}'
-
 ########
 
 class Local:
@@ -657,7 +504,7 @@ class LocalTailscale(Manageable):
         self.__qualname__ = "Local Tailscale"
 
     async def ping(self, availability_hint: bool | None = None):
-        logger.debug("Pinging %s", LazyStr(self.get_class_name))
+        logger.debug("Getting status of %s", LazyStr(self.get_class_name))
         success, stdout = await Subprocess.async_tailscale(['status', '--json', '--peers=false', '--self=true'])
         if success:
             status = json.loads(stdout)
@@ -665,6 +512,184 @@ class LocalTailscale(Manageable):
 
     async def _sleep_while_wait(self, available: bool):
         await asyncio.sleep(0.250)
+
+class Funnel(Pingable):
+    LOCAL_HOST = '127.0.0.1'
+
+    def __init__(self, tailscale: RemoteTailscale, machine_name: str, local_port: int, local_path: str, external_port: int):
+        self.local_port = local_port
+        self.external_name = f'{machine_name}.{tailscale.tailnet}'
+        self.external_url = f'https://{machine_name}.{tailscale.tailnet}:{external_port}{local_path}'
+
+    async def ping(self, availability_hint: bool | None = None):
+        logger.debug("Resolving DNS of %s (%s)", LazyStr(self.get_class_name), self.external_name)
+        try:
+            answer = dns.resolver.resolve(self.external_name)
+        except (dns.resolver.NXDOMAIN, dns.resolver.NoAnswer):
+            return False
+        return True
+
+    async def _sleep_while_wait(self, available: bool):
+        await asyncio.sleep(10)
+
+########
+
+class Webhooks:
+    PING_PATH = 'ping'
+    VARIABLE_PATH = 'variable'
+
+    def __init__(self, host: str, port: int):
+        self.host = host
+        self.port = port
+        self.variables = dict[str, asyncio.Queue[str]]()
+
+    @staticmethod
+    def get_ping_path():
+        return f'/{Webhooks.PING_PATH}'
+
+    @staticmethod
+    def get_variable_path(variable: str):
+        return f'/{Webhooks.VARIABLE_PATH}/{variable}'
+
+    async def _start(self):
+        async def _ping(request: web.Request):
+            return web.Response(text='pong')
+        async def _receive_variable(request: web.Request):
+            queue = self.variables.get(request.match_info['name'])
+            if queue:
+                with suppress(asyncio.QueueFull):
+                    queue.put_nowait(await request.text())
+            return web.Response(text='OK')
+        app = web.Application()
+        app.add_routes([
+            web.get(f'/{Webhooks.PING_PATH}', _ping),
+            web.post(f'/{Webhooks.VARIABLE_PATH}' + r'/{name}', _receive_variable)])
+        self.runner = web.AppRunner(app)
+        await self.runner.setup()
+        self.site = web.TCPSite(self.runner, host=self.host, port=self.port)
+        await self.site.start()
+
+    async def _stop(self):
+        await self.runner.cleanup()
+
+    def subscribe_variable(self, variable: str):
+        if variable not in self.variables:
+            self.variables[variable] = asyncio.Queue[str](maxsize=16)
+
+    def unsubscribe_variable(self, variable: str):
+        self.variables.pop(variable)
+
+    async def get_variable(self, variable: str, timeout: float):
+        queue = self.variables.get(variable)
+        if not queue:
+            raise ValueError(f"The {variable} is unknown")
+        try:
+            async with asyncio.timeout(timeout):
+                return await queue.get()
+        except TimeoutError as e:
+            e.add_note(f"Can't get value of {variable} for {timeout} seconds")
+            raise
+
+    def __enter__(self):
+        raise TypeError("Use async with instead")
+    def __exit__(self, exc_type, exc_value, exc_tb):
+        pass
+    async def __aenter__(self):
+        await self._start()
+        return self
+    async def __aexit__(self, exc_type, exc_value, exc_tb):
+        await self._stop()
+
+class Automate:
+    def __init__(self, secrets: Secrets, session: aiohttp.ClientSession, account: str, device: str, tokenfile: str):
+        self.session = session
+        self.account = account
+        self.device = device
+        self.secret = secrets.get(tokenfile)
+
+    async def send_message(self, message: str):
+        data = {
+            "secret": self.secret,
+            "to": self.account,
+            "device": self.device,
+            "priority": "high",
+            "payload": f"prim-ctrl;{time.time()};" + message
+        }
+        logger.debug("Messaging Automate with: %s", message)
+        async with self.session.post(f'https://llamalab.com/automate/cloud/message', json=data) as response:
+            await response.text()
+
+class AutomatepFTPdManager(Manager):
+    def __init__(self, automate: Automate):
+        self.automate = automate
+
+    async def start(self):
+        await self.automate.send_message('start-pftpd')
+
+    async def stop(self):
+        await self.automate.send_message('stop-pftpd')
+
+class AutomateTailscaleManager(Manager):
+    def __init__(self, automate: Automate):
+        self.automate = automate
+
+    async def start(self):
+        await self.automate.send_message('start-tailscale')
+
+    async def stop(self):
+        await self.automate.send_message('stop-tailscale')
+
+class AutomatePhoneState(PhoneState):
+    VARIABLE_STATE = 'state'
+
+    def __init__(self, session: aiohttp.ClientSession, webhooks: Webhooks, automate: Automate, funnel: Funnel):
+        self.session = session
+        self.webhooks = webhooks
+        self.automate = automate
+        self.funnel = funnel
+
+    async def get(self, repeat: float, timeout: float):
+        logger.info("Getting Phone state...")
+
+        # test funnel + webhooks availability, to not wait for a reply if funnel isn't configured properly
+        # though it will be routed locally, it will not go out to Tailscale's TCP forwarder servers, so the route is different from what Automate will see
+        test_timeout = 10.0
+        logger.debug("Testing Funnel with calling local webhook (timeout is %ds)", int(test_timeout))
+        try:
+            async with self.session.get(f'{self.funnel.external_url}{Webhooks.get_ping_path()}', timeout=ClientTimeout(total=test_timeout)) as response:
+                if await response.text() != 'pong':
+                    raise Exception()
+        except Exception as e:
+            raise RuntimeError(f"Local Funnel is not configured properly for {self.funnel.external_url}") from e
+
+        # test funnel DNS resolvability, if local Tailscale is freshly started up after longer down state, it can take some time for the DNS to be configured properly
+        test_timeout = 120.0
+        logger.debug("Testing Funnel's DNS configuration (timeout is %ds)", int(test_timeout))
+        try:
+            await self.funnel.wait_for(True, test_timeout)
+        except Exception as e:
+            raise RuntimeError(f"Funnel's DNS is not configured by Tailscale for {self.funnel.external_name}") from e
+
+        # get state
+        logger.debug("Getting Phone state (repeat after %ds, timeout is %ds)", int(repeat), int(timeout))
+        self.webhooks.subscribe_variable(AutomatePhoneState.VARIABLE_STATE)
+        try:
+            async with asyncio.timeout(timeout):
+                while True:
+                    try:
+                        await self.automate.send_message(f'get-state;{self.funnel.external_url}{Webhooks.get_variable_path(AutomatePhoneState.VARIABLE_STATE)}')
+                        state = await self.webhooks.get_variable(AutomatePhoneState.VARIABLE_STATE, min(repeat, timeout))
+                        break
+                    except TimeoutError:
+                        pass
+        except TimeoutError as e:
+            e.add_note(f"Can't get value of {AutomatePhoneState.VARIABLE_STATE} for {timeout} seconds - please check on your phone in the Automate app, that the prim-ctrl flow is running")
+            raise
+        finally:
+            self.webhooks.unsubscribe_variable(AutomatePhoneState.VARIABLE_STATE)
+
+        logger.info("Phone state is %s", state)
+        return StateSerializer.loads(state)
 
 ########
 
@@ -922,7 +947,7 @@ class AutomateControl(Control):
 
             async with Webhooks(Funnel.LOCAL_HOST, funnel.local_port) if funnel else nullcontext() as webhooks:
                 local = Local(local_tailscale)
-                automate_phone_state = AutomatePhoneState(session, webhooks, automate, funnel.external_url) if funnel and webhooks else None
+                automate_phone_state = AutomatePhoneState(session, webhooks, automate, funnel) if funnel and webhooks else None
                 phone = Phone(zeroconf_pftpd, remote_tailscale, remote_pftpd, automate_phone_state)
                 await self.execute(args, local, phone)
 

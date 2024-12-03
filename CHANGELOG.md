@@ -1,5 +1,9 @@
 # Changelog
 
+## vNext
+
+- Test Funnel's DNS configuration
+
 ## 0.6.1
 
 - Stop local Tailscale on error
