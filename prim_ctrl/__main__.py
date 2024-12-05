@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Dict
 
 import aiohttp
+import dns.asyncresolver
 import dns.resolver
 from aiohttp import ClientTimeout, web
 from platformdirs import user_cache_dir
@@ -521,16 +522,24 @@ class Funnel(Pingable):
         self.external_name = f'{machine_name}.{tailscale.tailnet}'
         self.external_url = f'https://{machine_name}.{tailscale.tailnet}:{external_port}{local_path}'
 
+    async def wait_for(self, available: bool, timeout: float):
+        self._sleepcounter = 0
+        await super().wait_for(available, timeout)
+
     async def ping(self, availability_hint: bool | None = None):
-        logger.debug("Resolving DNS of %s (%s)", LazyStr(self.get_class_name), self.external_name)
+        logger.debug("Resolving DNS for %s (%s)", LazyStr(self.get_class_name), self.external_name)
         try:
-            answer = dns.resolver.resolve(self.external_name)
+            # resolve directly at an outside DNS, because local magicDNS will return the tailnet IP
+            _answer = await dns.asyncresolver.resolve_at('1.1.1.1', self.external_name)
         except (dns.resolver.NXDOMAIN, dns.resolver.NoAnswer):
             return False
         return True
 
     async def _sleep_while_wait(self, available: bool):
+        if 0 != self._sleepcounter and 0 == self._sleepcounter % 6:
+            logger.info("Waiting for public DNS records to be updated for %s (%s)...", LazyStr(self.get_class_name), self.external_name)
         await asyncio.sleep(10)
+        self._sleepcounter += 1
 
 ########
 
@@ -662,8 +671,8 @@ class AutomatePhoneState(PhoneState):
         except Exception as e:
             raise RuntimeError(f"Local Funnel is not configured properly for {self.funnel.external_url}") from e
 
-        # test funnel DNS resolvability, if local Tailscale is freshly started up after longer down state, it can take some time for the DNS to be configured properly
-        test_timeout = 120.0
+        # test funnel's DNS resolvability, if local Tailscale is freshly started up after longer down state, it can take up to 10 minutes for public DNS records to get updated
+        test_timeout = 600.0
         logger.debug("Testing Funnel's DNS configuration (timeout is %ds)", int(test_timeout))
         try:
             await self.funnel.wait_for(True, test_timeout)
