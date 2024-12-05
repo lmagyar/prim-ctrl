@@ -404,19 +404,19 @@ class ZeroconfService(Manageable):
 
     async def ping(self, availability_hint: bool | None = None):
         async def _connect(connect_timeout: float, resolve_timeout: float):
-            async def asyncio_open_connection(host: str, port: int, timeout: float):
+            async def _asyncio_open_connection(host: str, port: int, timeout: float):
                 logger.debug(" Connecting to %s on port %d (timeout is %ds)", host, port, timeout)
                 async with asyncio.timeout(timeout):
                     return await asyncio.open_connection(host, port)
-            async def service_resolver_get(service_name: str, timeout: float):
+            async def _service_resolver_get(service_name: str, timeout: float):
                 logger.debug(" Resolving %s (timeout is %ds)", service_name, timeout)
                 return await self.service_resolver.get(service_name, timeout)
             if self.host and self.port:
-                return await asyncio_open_connection(self.host, self.port, connect_timeout)
+                return await _asyncio_open_connection(self.host, self.port, connect_timeout)
             host, port = self.service_cache.get(self.service_name)
             if host and port:
                 try:
-                    reader_writer = await asyncio_open_connection(host, port, connect_timeout)
+                    reader_writer = await _asyncio_open_connection(host, port, connect_timeout)
                     self.host = host
                     self.port = port
                     return reader_writer
@@ -425,8 +425,8 @@ class ZeroconfService(Manageable):
                         pass
                     else:
                         raise
-            host, port = await service_resolver_get(self.service_name, resolve_timeout)
-            reader_writer = await asyncio_open_connection(host, port, connect_timeout)
+            host, port = await _service_resolver_get(self.service_name, resolve_timeout)
+            reader_writer = await _asyncio_open_connection(host, port, connect_timeout)
             self.service_cache.set(self.service_name, host, port)
             self.host = host
             self.port = port
