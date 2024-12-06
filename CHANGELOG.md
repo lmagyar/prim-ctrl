@@ -1,6 +1,6 @@
 # Changelog
 
-## vNext
+## 0.6.3
 
 - Fix local webhook test
 
