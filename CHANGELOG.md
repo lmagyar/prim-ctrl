@@ -1,5 +1,9 @@
 # Changelog
 
+## vNext
+
+- Fix local webhook test
+
 ## 0.6.2
 
 - Test Funnel's DNS configuration
