@@ -114,6 +114,7 @@ But if the script runs scheduled, we can't be sure whether the phone is on WiFi,
 
 Notes:
 - Even when -b option is **not** used, the script will output 'connected=(local|remote)', what you can use to determine whether to use -a option for the prim-sync script
+- If local Tailscale VPN was disconnected for a longer period (several hours), the public DNS records for Funnel are removed by Tailscale, and after connecting local Tailscale VPN to the tailnet it can take up to 10 minutes for Funnel's public DNS records to show up for your tailnet domain. If the script connects local Tailscale VPN to the tailnet, then it regularly checks and waits up to 10 minutes for the public DNS records to get updated.
 
 ### Some example
 

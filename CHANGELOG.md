@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.6.2
+
+- Test Funnel's DNS configuration
+- Update dependencies
+
 ## 0.6.1
 
 - Stop local Tailscale on error
