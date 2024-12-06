@@ -648,6 +648,25 @@ class AutomateTailscaleManager(Manager):
     async def stop(self):
         await self.automate.send_message('stop-tailscale')
 
+class WebhookPing(Pingable):
+    def __init__(self, session: aiohttp.ClientSession, webhooks: Webhooks, funnel: Funnel):
+        self.session = session
+        self.webhooks = webhooks
+        self.funnel = funnel
+        self.ping_url = f'{self.funnel.external_url}{Webhooks.get_ping_path()}'
+        self.__qualname__ = "Webhooks"
+
+    async def ping(self, availability_hint: bool | None = None):
+        logger.debug("Calling url %s", self.ping_url)
+        try:
+            async with self.session.get(self.ping_url, timeout=ClientTimeout(total=1)) as response:
+                return 'pong' == await response.text()
+        except Exception:
+            return False
+
+    async def _sleep_while_wait(self, available: bool):
+        await asyncio.sleep(1)
+
 class AutomatePhoneState(PhoneState):
     VARIABLE_STATE = 'state'
 
@@ -656,6 +675,7 @@ class AutomatePhoneState(PhoneState):
         self.webhooks = webhooks
         self.automate = automate
         self.funnel = funnel
+        self.webhook_ping = WebhookPing(session, webhooks, funnel)
 
     async def get(self, repeat: float, timeout: float):
         logger.info("Getting Phone state...")
@@ -665,9 +685,7 @@ class AutomatePhoneState(PhoneState):
         test_timeout = 10.0
         logger.debug("Testing Funnel with calling local webhook (timeout is %ds)", int(test_timeout))
         try:
-            async with self.session.get(f'{self.funnel.external_url}{Webhooks.get_ping_path()}', timeout=ClientTimeout(total=test_timeout)) as response:
-                if await response.text() != 'pong':
-                    raise Exception()
+            await self.webhook_ping.wait_for(True, test_timeout)
         except Exception as e:
             raise RuntimeError(f"Local Funnel is not configured properly for {self.funnel.external_url}") from e
 
