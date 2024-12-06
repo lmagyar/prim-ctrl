@@ -3,6 +3,7 @@
 ## vNext
 
 - Test Funnel's DNS configuration
+- Update dependencies
 
 ## 0.6.1
 
