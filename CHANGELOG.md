@@ -1,6 +1,6 @@
 # Changelog
 
-## vNext
+## 0.6.2
 
 - Test Funnel's DNS configuration
 - Update dependencies
