@@ -1,5 +1,9 @@
 # Changelog
 
+## vNext
+
+- Fix starting local Tailscale
+
 ## 0.6.3
 
 - Fix local webhook test

@@ -822,7 +822,8 @@ class Control:
                         state[Control.LOCAL_VPN] = local_vpn_state
 
                         # start changing local state - we need a local vpn to be able to access the state of the remote vpn and optionally the phone
-                        await local.vpn.start(10, 30)
+                        if not state[Control.LOCAL_VPN]:
+                            await local.vpn.start(10, 30)
 
                         zeroconf_accessible = False
                         remote_accessible = False
