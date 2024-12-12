@@ -1,6 +1,6 @@
 # Changelog
 
-## vNext
+## 0.6.4
 
 - Fix starting local Tailscale
 
