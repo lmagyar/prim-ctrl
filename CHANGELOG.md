@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.6.4
+
+- Fix starting local Tailscale
+
 ## 0.6.3
 
 - Fix local webhook test
