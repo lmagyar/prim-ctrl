@@ -299,8 +299,8 @@ class PhoneState:
 class Cache:
     PRIM_SYNC_APP_NAME = 'prim-sync'
 
-    def __init__(self):
-        self.cache_path = Path(user_cache_dir(Cache.PRIM_SYNC_APP_NAME, False))
+    def __init__(self, app_name: str):
+        self.cache_path = Path(user_cache_dir(app_name, False))
 
     def set(self, key: str, value: str):
         self.cache_path.mkdir(parents=True, exist_ok=True)
@@ -960,7 +960,7 @@ class AutomateControl(Control):
                 connector=aiohttp.TCPConnector(force_close=True)) as session,
             AsyncZeroconf() as zeroconf
         ):
-            service_cache = ServiceCache(Cache())
+            service_cache = ServiceCache(Cache(Cache.PRIM_SYNC_APP_NAME))
             service_resolver = SftpServiceResolver(zeroconf)
             service_listener = pFTPdServiceListener(args.server_name, service_cache)
             service_browser = SftpServiceBrowser(zeroconf)

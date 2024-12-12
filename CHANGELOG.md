@@ -1,5 +1,9 @@
 # Changelog
 
+## vNext
+
+- Refactor caching
+
 ## 0.6.4
 
 - Fix starting local Tailscale
