@@ -517,10 +517,11 @@ class LocalTailscale(Manageable):
 class Funnel(Pingable):
     LOCAL_HOST = '127.0.0.1'
 
-    def __init__(self, tailscale: RemoteTailscale, machine_name: str, local_port: int, local_path: str, external_port: int):
+    def __init__(self, tailnet: str, machine_name: str, local_port: int, local_path: str, external_port: int):
+        self.machine_name = machine_name
         self.local_port = local_port
-        self.external_name = f'{machine_name}.{tailscale.tailnet}'
-        self.external_url = f'https://{machine_name}.{tailscale.tailnet}:{external_port}{local_path}'
+        self.external_name = f'{machine_name}.{tailnet}'
+        self.external_url = f'https://{machine_name}.{tailnet}:{external_port}{local_path}'
 
     async def wait_for(self, available: bool, timeout: float):
         self._sleepcounter = 0
@@ -971,7 +972,7 @@ class AutomateControl(Control):
             remote_tailscale = RemoteTailscale(args.tailscale[0], args.tailscale[1], AutomateTailscaleManager(automate)) if args.tailscale else None
             zeroconf_pftpd = ZeroconfpFTPd(args.server_name, service_cache, service_resolver, AutomatepFTPdManager(automate))
             remote_pftpd = RemotepFTPd(remote_tailscale.host, int(args.tailscale[2]), zeroconf_pftpd.manager) if remote_tailscale else None
-            funnel = Funnel(remote_tailscale, args.funnel[0], int(args.funnel[1]), args.funnel[2], int(args.funnel[3])) if remote_tailscale and args.funnel else None
+            funnel = Funnel(remote_tailscale.tailnet, args.funnel[0], int(args.funnel[1]), args.funnel[2], int(args.funnel[3])) if remote_tailscale and args.funnel else None
 
             async with Webhooks(Funnel.LOCAL_HOST, funnel.local_port) if funnel else nullcontext() as webhooks:
                 local = Local(local_tailscale)
