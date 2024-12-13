@@ -3,7 +3,7 @@
 ## vNext
 
 - Delay Funnel's DNS configuration test (new secretfile sub-option)
-- Refactor caching
+- Refactor caching, logging
 
 ## 0.6.4
 

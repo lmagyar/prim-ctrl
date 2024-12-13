@@ -13,7 +13,6 @@ from abc import abstractmethod
 from contextlib import nullcontext, suppress
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Dict
 
 import aiohttp
 import dns.asyncresolver
@@ -30,7 +29,7 @@ from zeroconf.asyncio import AsyncZeroconf
 class LevelFormatter(logging.Formatter):
     logging.Formatter.default_msec_format = logging.Formatter.default_msec_format.replace(',', '.') if logging.Formatter.default_msec_format else None
 
-    def __init__(self, fmts: Dict[int, str], fmt: str, **kwargs):
+    def __init__(self, fmts: dict[int, str], fmt: str, **kwargs):
         super().__init__()
         self.formatters = dict({level: logging.Formatter(fmt, **kwargs) for level, fmt in fmts.items()})
         self.default_formatter = logging.Formatter(fmt, **kwargs)
@@ -96,7 +95,10 @@ class LazyStr:
         self.result = None
     def __str__(self):
         if self.result is None:
+            if callable(self.func):
             self.result = str(self.func(*self.args, **self.kwargs))
+            else:
+                self.result = str(self.func)
         return self.result
 
 logger = Logger(Path(sys.argv[0]).name)
