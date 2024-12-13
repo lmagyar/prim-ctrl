@@ -576,7 +576,7 @@ class LocalTailscale(Manageable):
         start_result = await super().start(repeat, timeout)
         if start_result and self.tailscale and self.machine_name:
             max_last_seen_age = 3600
-            wait_on_fresh_start = 15
+            wait_on_fresh_start = 10
             difference = datetime.now(timezone.utc).replace(microsecond=0) - device_info.last_seen if device_info.last_seen else None
             difference_sec = difference.total_seconds() if difference else None
             if difference_sec is None or difference_sec > max_last_seen_age:
