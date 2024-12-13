@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "prim-ctrl"
-version = "0.6.5rc03"
+version = "0.6.5rc04"
 description = "Primitive Ctrl - Remote control of your phone's Primitive FTPd Android SFTP server and optionally Tailscale VPN."
 license = "Apache-2.0"
 authors = ["Laszlo Magyar <lmagyar1973@gmail.com>"]
