@@ -500,7 +500,7 @@ class Tailscale():
         self.session = session
         self.tailnet = tailnet
         self.secretfile = secretfile
-        self.tailscale_client = None
+        self.tailscale_api = None
 
     async def _start(self):
         # create new access_token from client_secret if previous access_token is expired or nonexistent
@@ -529,17 +529,16 @@ class Tailscale():
             if expires_in < 3600:
                 raise RuntimeError(f'Tailscale access token received shorter that 1 hour, {expires_in} seconds expiration')
             self.secrets.set(tokenfile, token)
-        self.tailscale_client = TailscaleApi(tailnet=self.tailnet, api_key=token, session=self.session)
+        self.tailscale_api = TailscaleApi(session=self.session, tailnet=self.tailnet, api_key=token)
 
     async def device(self, machine_name: str) -> TailscaleDeviceInfo:
-        if not self.tailscale_client:
+        if not self.tailscale_api:
             await self._start()
-        assert self.tailscale_client is not None
+        assert self.tailscale_api is not None
         logger.debug("Calling Tailscale API for devices")
-        devices = await self.tailscale_client.devices()
-        device_name = f'{machine_name}.{self.tailnet}'
+        devices = await self.tailscale_api.devices()
         for device in devices.values():
-            if device.name == device_name:
+            if device.hostname == machine_name:
                 return device
         raise RuntimeError(f"Device {machine_name} in {self.tailnet} is unknown by Tailscale")
 
