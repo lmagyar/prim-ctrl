@@ -96,7 +96,7 @@ class LazyStr:
     def __str__(self):
         if self.result is None:
             if callable(self.func):
-            self.result = str(self.func(*self.args, **self.kwargs))
+                self.result = str(self.func(*self.args, **self.kwargs))
             else:
                 self.result = str(self.func)
         return self.result
@@ -577,15 +577,12 @@ class LocalTailscale(Manageable):
         if start_result and self.tailscale and self.machine_name:
             max_last_seen_age = 3600
             wait_on_fresh_start = 15
-            difference = (datetime.now(timezone.utc) - device_info.last_seen).total_seconds() if device_info.last_seen else None
-            if difference is None or difference > max_last_seen_age:
+            difference = datetime.now(timezone.utc).replace(microsecond=0) - device_info.last_seen if device_info.last_seen else None
+            difference_sec = difference.total_seconds() if difference else None
+            if difference_sec is None or difference_sec > max_last_seen_age:
                 # wait a little to avoid caching empty DNS entry for 5 minutes, better to loose a few seconds than 300s
-                if not difference:
-                    logger.debug("Waiting for %is, because %s is freshly started up and wasn't seen for more than %is",
-                        wait_on_fresh_start, LazyStr(self.get_class_name), max_last_seen_age)
-                else:
-                    logger.debug("Waiting for %is, because %s is freshly started up and wasn't seen for more than %is (last seen %is ago)",
-                        wait_on_fresh_start, LazyStr(self.get_class_name), max_last_seen_age, difference)
+                logger.debug("Waiting for %is, because %s is freshly started up and wasn't seen for more than %im (last seen at %s, %s ago)",
+                     wait_on_fresh_start, LazyStr(self.get_class_name), max_last_seen_age/60, LazyStr(device_info.last_seen), LazyStr(difference))
                 await asyncio.sleep(wait_on_fresh_start)
         return start_result
 
