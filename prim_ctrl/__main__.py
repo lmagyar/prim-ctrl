@@ -581,8 +581,9 @@ class LocalTailscale(Manageable):
             difference_sec = difference.total_seconds() if difference else None
             if difference_sec is None or difference_sec > max_last_seen_age:
                 # wait a little to avoid caching empty DNS entry for 5 minutes, better to loose a few seconds than 300s
-                logger.debug("Waiting for %is, because %s is freshly started up and wasn't seen for more than %im (last seen at %s, %s ago)",
-                     wait_on_fresh_start, LazyStr(self.get_class_name), max_last_seen_age/60, LazyStr(device_info.last_seen), LazyStr(difference))
+                logger.debug("Waiting for %is, because %s is freshly started up and wasn't seen for more than %ih (last seen at %s, %s ago)",
+                     wait_on_fresh_start, LazyStr(self.get_class_name), max_last_seen_age/3600,
+                     LazyStr((lambda last_seen : str(last_seen.astimezone())[:19] if last_seen else None), device_info.last_seen), LazyStr(difference))
                 await asyncio.sleep(wait_on_fresh_start)
         return start_result
 
