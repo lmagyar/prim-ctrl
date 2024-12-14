@@ -13,13 +13,14 @@ from abc import abstractmethod
 from contextlib import nullcontext, suppress
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Dict
 
 import aiohttp
 import dns.asyncresolver
 import dns.resolver
 from aiohttp import ClientTimeout, web
 from platformdirs import user_cache_dir
+from tailscale import Device as TailscaleDeviceInfo
+from tailscale import Tailscale as TailscaleApi
 from zeroconf import Zeroconf, ServiceInfo, ServiceListener as ZeroconfServiceListener
 from zeroconf.asyncio import AsyncZeroconf
 
@@ -28,7 +29,7 @@ from zeroconf.asyncio import AsyncZeroconf
 class LevelFormatter(logging.Formatter):
     logging.Formatter.default_msec_format = logging.Formatter.default_msec_format.replace(',', '.') if logging.Formatter.default_msec_format else None
 
-    def __init__(self, fmts: Dict[int, str], fmt: str, **kwargs):
+    def __init__(self, fmts: dict[int, str], fmt: str, **kwargs):
         super().__init__()
         self.formatters = dict({level: logging.Formatter(fmt, **kwargs) for level, fmt in fmts.items()})
         self.default_formatter = logging.Formatter(fmt, **kwargs)
@@ -94,7 +95,10 @@ class LazyStr:
         self.result = None
     def __str__(self):
         if self.result is None:
-            self.result = str(self.func(*self.args, **self.kwargs))
+            if callable(self.func):
+                self.result = str(self.func(*self.args, **self.kwargs))
+            else:
+                self.result = str(self.func)
         return self.result
 
 logger = Logger(Path(sys.argv[0]).name)
@@ -299,8 +303,8 @@ class PhoneState:
 class Cache:
     PRIM_SYNC_APP_NAME = 'prim-sync'
 
-    def __init__(self):
-        self.cache_path = Path(user_cache_dir(Cache.PRIM_SYNC_APP_NAME, False))
+    def __init__(self, app_name: str):
+        self.cache_path = Path(user_cache_dir(app_name, False))
 
     def set(self, key: str, value: str):
         self.cache_path.mkdir(parents=True, exist_ok=True)
@@ -490,6 +494,56 @@ class Local:
     def __init__(self, vpn: Manageable | None):
         self.vpn = vpn
 
+class Tailscale():
+    TOKEN_SUFFIX = '.token'
+
+    def __init__(self, secrets: Secrets, session: aiohttp.ClientSession, tailnet: str, secretfile: str):
+        self.secrets = secrets
+        self.session = session
+        self.tailnet = tailnet
+        self.secretfile = secretfile
+        self.tailscale_api = None
+
+    async def _start(self):
+        # create new access_token from client_secret if previous access_token is expired or nonexistent
+        tokenfile = self.secretfile + Tailscale.TOKEN_SUFFIX
+        token = None
+        try:
+            if 3300 > self.secrets.get_age(tokenfile):
+                token = self.secrets.get(tokenfile)
+        except FileNotFoundError:
+            pass
+        if token is None:
+            secret = self.secrets.get(self.secretfile)
+            client_id = secret.split('-')[2]
+            data = {
+                "client_id": client_id,
+                "client_secret": secret,
+                "grant_type": "client_credentials",
+                "scope" : "devices:core:read"
+            }
+            logger.debug("Generating new Tailscale API token")
+            async with self.session.post('https://api.tailscale.com/api/v2/oauth/token', data=data) as response:
+                json_response = await response.json()
+            expires_in = json_response.get('expires_in')
+            token = json_response.get('access_token')
+            assert expires_in is not None and token is not None
+            if expires_in < 3600:
+                raise RuntimeError(f'Tailscale access token received shorter that 1 hour, {expires_in} seconds expiration')
+            self.secrets.set(tokenfile, token)
+        self.tailscale_api = TailscaleApi(session=self.session, tailnet=self.tailnet, api_key=token)
+
+    async def device(self, machine_name: str) -> TailscaleDeviceInfo:
+        if not self.tailscale_api:
+            await self._start()
+        assert self.tailscale_api is not None
+        logger.debug("Calling Tailscale API for devices")
+        devices = await self.tailscale_api.devices()
+        for device in devices.values():
+            if device.hostname == machine_name:
+                return device
+        raise RuntimeError(f"Device {machine_name} in {self.tailnet} is unknown by Tailscale")
+
 class LocalTailscaleManager(Manager):
     async def start(self):
         if not (await Subprocess.async_tailscale(['up']))[0]:
@@ -500,8 +554,10 @@ class LocalTailscaleManager(Manager):
             raise RuntimeError("Failed to shut down local Tailscale")
 
 class LocalTailscale(Manageable):
-    def __init__(self):
+    def __init__(self, tailscale: Tailscale | None = None, machine_name: str | None = None):
         super().__init__(LocalTailscaleManager())
+        self.tailscale = tailscale
+        self.machine_name = machine_name
         self.__qualname__ = "Local Tailscale"
 
     async def ping(self, availability_hint: bool | None = None):
@@ -514,13 +570,31 @@ class LocalTailscale(Manageable):
     async def _sleep_while_wait(self, available: bool):
         await asyncio.sleep(0.250)
 
+    async def start(self, repeat: float, timeout: float):
+        if self.tailscale and self.machine_name:
+            device_info = await self.tailscale.device(self.machine_name)
+        start_result = await super().start(repeat, timeout)
+        if start_result and self.tailscale and self.machine_name:
+            max_last_seen_age = 7200
+            wait_on_fresh_start = 10
+            difference = datetime.now(timezone.utc).replace(microsecond=0) - device_info.last_seen if device_info.last_seen else None
+            difference_sec = difference.total_seconds() if difference else None
+            if difference_sec is None or difference_sec > max_last_seen_age:
+                # wait a little to avoid caching empty DNS entry for 5 minutes, better to loose a few seconds than 300s
+                logger.debug("Waiting for %is, because %s is freshly started up and wasn't seen for more than %ih (last seen at %s, %s ago)",
+                     wait_on_fresh_start, LazyStr(self.get_class_name), max_last_seen_age/3600,
+                     LazyStr((lambda last_seen : str(last_seen.astimezone())[:19] if last_seen else None), device_info.last_seen), LazyStr(difference))
+                await asyncio.sleep(wait_on_fresh_start)
+        return start_result
+
 class Funnel(Pingable):
     LOCAL_HOST = '127.0.0.1'
 
-    def __init__(self, tailscale: RemoteTailscale, machine_name: str, local_port: int, local_path: str, external_port: int):
+    def __init__(self, tailnet: str, machine_name: str, local_port: int, local_path: str, external_port: int):
+        self.machine_name = machine_name
         self.local_port = local_port
-        self.external_name = f'{machine_name}.{tailscale.tailnet}'
-        self.external_url = f'https://{machine_name}.{tailscale.tailnet}:{external_port}{local_path}'
+        self.external_name = f'{machine_name}.{tailnet}'
+        self.external_url = f'https://{machine_name}.{tailnet}:{external_port}{local_path}'
 
     async def wait_for(self, available: bool, timeout: float):
         self._sleepcounter = 0
@@ -912,7 +986,7 @@ class AutomateControl(Control):
         parser.add_argument('automate_account', metavar='automate-account', help="your Google account email you set up in the Automate flow's first Set variable block's Value field")
         parser.add_argument('automate_device', metavar='automate-device', help="the device name you can see at the Automate flow's Cloud receive block's This device field")
         parser.add_argument('automate_tokenfile', metavar='automate-tokenfile', help="filename containing Automates's Secret that located under your .secrets folder\n"
-                            "(generated on https://llamalab.com/automate/cloud, use the same Google account you set up on the Cloud receive block)")
+            "(generated on https://llamalab.com/automate/cloud, use the same Google account you set up on the Cloud receive block)")
 
         Control.setup_parser_arguments(parser)
 
@@ -928,14 +1002,17 @@ class AutomateControl(Control):
                 "Note: --backup-state is accurate only, when --funnel is used\n"
                 "Note: --accept-cellular option can be used only when --funnel is used")
         vpn_group.add_argument('--tailscale', nargs=3, metavar=('tailnet', 'remote-machine-name', 'sftp-port'), help=
-                            "tailnet:             your Tailscale tailnet name (eg. tailxxxx.ts.net)\n"
-                            "remote-machine-name: your phone's name within your tailnet (just the name, without the tailnet)\n"
-                            "sftp-port:           Primitive FTPd's sftp port")
-        vpn_group.add_argument('--funnel', nargs=4, metavar=('local-machine-name', 'local-port', 'local-path', 'external-port'), help=
-                            "local-machine-name:  your laptop's name within your tailnet (just the name, without the tailnet)\n"
-                            "local-port:          12345 - if you used the example tailscale funnel command above (the local webhook will be started on this port)\n"
-                            "local-path:          /prim-ctrl - if you used the example tailscale funnel command above\n"
-                            "external-port:       8443 - if you used the example tailscale funnel command above")
+            "tailnet:             your Tailscale tailnet name (eg. tailxxxx.ts.net)\n"
+            "remote-machine-name: your phone's name within your tailnet (just the name, without the tailnet)\n"
+            "sftp-port:           Primitive FTPd's sftp port")
+        vpn_group.add_argument('--funnel', nargs=5, metavar=('local-machine-name', 'local-port', 'local-path', 'external-port', 'secretfile'), help=
+            "local-machine-name:  your laptop's name within your tailnet (just the name, without the tailnet)\n"
+            "local-port:          12345 - if you used the example tailscale funnel command above (the local webhook will be started on this port)\n"
+            "local-path:          /prim-ctrl - if you used the example tailscale funnel command above\n"
+            "external-port:       8443 - if you used the example tailscale funnel command above\n"
+            "secretfile:          filename containing Tailscale's Client secret (not API access token, not Auth key) that located under your .secrets folder\n"
+            "                     (generated on https://login.tailscale.com/admin/settings/oauth, with 'devices:core:read' scope,\n"
+            "                     save only the Client secret in the file, the Client ID is part of it)")
         Control.setup_parser_vpngroup(vpn_group)
 
         parser.set_defaults(ctor=AutomateControl)
@@ -960,18 +1037,22 @@ class AutomateControl(Control):
                 connector=aiohttp.TCPConnector(force_close=True)) as session,
             AsyncZeroconf() as zeroconf
         ):
-            service_cache = ServiceCache(Cache())
+            service_cache = ServiceCache(Cache(Cache.PRIM_SYNC_APP_NAME))
             service_resolver = SftpServiceResolver(zeroconf)
             service_listener = pFTPdServiceListener(args.server_name, service_cache)
             service_browser = SftpServiceBrowser(zeroconf)
             await service_browser.add_service_listener(service_listener)
 
-            automate = Automate(Secrets(), session, args.automate_account, args.automate_device, args.automate_tokenfile)
-            local_tailscale = LocalTailscale() if args.tailscale else None
+            secrets = Secrets()
+            automate = Automate(secrets, session, args.automate_account, args.automate_device, args.automate_tokenfile)
             remote_tailscale = RemoteTailscale(args.tailscale[0], args.tailscale[1], AutomateTailscaleManager(automate)) if args.tailscale else None
             zeroconf_pftpd = ZeroconfpFTPd(args.server_name, service_cache, service_resolver, AutomatepFTPdManager(automate))
             remote_pftpd = RemotepFTPd(remote_tailscale.host, int(args.tailscale[2]), zeroconf_pftpd.manager) if remote_tailscale else None
-            funnel = Funnel(remote_tailscale, args.funnel[0], int(args.funnel[1]), args.funnel[2], int(args.funnel[3])) if remote_tailscale and args.funnel else None
+            funnel = Funnel(remote_tailscale.tailnet, args.funnel[0], int(args.funnel[1]), args.funnel[2], int(args.funnel[3])) if remote_tailscale and args.funnel else None
+            local_tailscale = (
+                LocalTailscale(Tailscale(secrets, session, remote_tailscale.tailnet, args.funnel[4]), funnel.machine_name) if remote_tailscale and funnel else
+                LocalTailscale() if args.tailscale else
+                None)
 
             async with Webhooks(Funnel.LOCAL_HOST, funnel.local_port) if funnel else nullcontext() as webhooks:
                 local = Local(local_tailscale)

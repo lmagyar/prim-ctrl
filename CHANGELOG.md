@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.6.5
+
+- Delay Funnel's DNS configuration test (new secretfile sub-option)
+- Refactor caching, logging
+
 ## 0.6.4
 
 - Fix starting local Tailscale
