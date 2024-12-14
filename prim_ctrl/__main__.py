@@ -585,6 +585,9 @@ class LocalTailscale(Manageable):
                      wait_on_fresh_start, LazyStr(self.get_class_name), max_last_seen_age/3600,
                      LazyStr((lambda last_seen : str(last_seen.astimezone())[:19] if last_seen else None), device_info.last_seen), LazyStr(difference))
                 await asyncio.sleep(wait_on_fresh_start)
+            else:
+                # give some time for Tailscale Funnel to process the status change
+                await asyncio.sleep(1)
         return start_result
 
 class Funnel(Pingable):
