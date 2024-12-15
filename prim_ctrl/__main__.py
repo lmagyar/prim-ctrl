@@ -145,24 +145,6 @@ class Subprocess:
 
 ########
 
-class Secrets:
-    DIR_NAME = '.secrets'
-
-    def __init__(self):
-        self.secrets_path = Path.home() / Secrets.DIR_NAME
-
-    def get(self, tokenfile: str):
-        with open(str(self.secrets_path / tokenfile), 'rt') as file:
-            return file.readline().rstrip()
-
-    def set(self, tokenfile: str, token: str):
-        self.secrets_path.mkdir(parents=True, exist_ok=True)
-        with open(str(self.secrets_path / tokenfile), 'wt') as file:
-            file.write(token)
-
-    def get_age(self, tokenfile: str):
-        return (datetime.now(timezone.utc) - datetime.fromtimestamp(os.stat(str(self.secrets_path / tokenfile)).st_mtime, timezone.utc)).total_seconds()
-
 class Pingable:
     @abstractmethod
     async def ping(self, availability_hint: bool | None = None) -> bool:
@@ -300,6 +282,24 @@ class PhoneState:
 
 ########
 
+class Secrets:
+    DIR_NAME = '.secrets'
+
+    def __init__(self):
+        self.secrets_path = Path.home() / Secrets.DIR_NAME
+
+    def get(self, tokenfile: str):
+        with open(str(self.secrets_path / tokenfile), 'rt') as file:
+            return file.readline().rstrip()
+
+    def set(self, tokenfile: str, token: str):
+        self.secrets_path.mkdir(parents=True, exist_ok=True)
+        with open(str(self.secrets_path / tokenfile), 'wt') as file:
+            file.write(token)
+
+    def get_age(self, tokenfile: str):
+        return (datetime.now(timezone.utc) - datetime.fromtimestamp(os.stat(str(self.secrets_path / tokenfile)).st_mtime, timezone.utc)).total_seconds()
+
 class Cache:
     PRIM_SYNC_APP_NAME = 'prim-sync'
 
@@ -320,6 +320,8 @@ class Cache:
                 return file.readline().rstrip()
         else:
             return None
+
+########
 
 class ServiceCache:
     def __init__(self, cache: Cache):
@@ -1039,6 +1041,7 @@ class AutomateControl(Control):
         ):
             service_cache = ServiceCache(Cache(Cache.PRIM_SYNC_APP_NAME))
             service_resolver = SftpServiceResolver(zeroconf)
+
             service_listener = pFTPdServiceListener(args.server_name, service_cache)
             service_browser = SftpServiceBrowser(zeroconf)
             await service_browser.add_service_listener(service_listener)
