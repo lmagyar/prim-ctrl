@@ -107,21 +107,21 @@ logger = Logger(Path(sys.argv[0]).name)
 
 class Subprocess:
 
-    # based on https://stackoverflow.com/a/55656177/2755656
-    @staticmethod
-    def sync_ping(host, packets: int = 1, timeout: float = 1):
-        if platform.system().lower() == 'windows':
-            command = ['ping', '-n', str(packets), '-w', str(int(timeout*1000)), host]
-            # don't use text=True, the async version will raise ValueError("text must be False"), who knows why
-            result = subprocess.run(command, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, creationflags=subprocess.CREATE_NO_WINDOW)
-            return result.returncode == 0 and b'TTL=' in result.stdout
-        else:
-            command = ['ping', '-c', str(packets), '-W', str(int(timeout)), host]
-            result = subprocess.run(command, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            return result.returncode == 0
+    # # based on https://stackoverflow.com/a/55656177/2755656
+    # @staticmethod
+    # def sync_ping(host, packets: int = 1, timeout: float = 1):
+    #     if platform.system().lower() == 'windows':
+    #         command = ['ping', '-n', str(packets), '-w', str(int(timeout*1000)), host]
+    #         # don't use text=True, the async version will raise ValueError("text must be False"), who knows why
+    #         result = subprocess.run(command, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, creationflags=subprocess.CREATE_NO_WINDOW)
+    #         return result.returncode == 0 and b'TTL=' in result.stdout
+    #     else:
+    #         command = ['ping', '-c', str(packets), '-W', str(int(timeout)), host]
+    #         result = subprocess.run(command, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    #         return result.returncode == 0
 
     @staticmethod
-    async def async_ping(host, packets: int = 1, timeout: float = 1):
+    async def ping(host, packets: int = 1, timeout: float = 1):
         if platform.system().lower() == 'windows':
             command = ['ping', '-n', str(packets), '-w', str(int(timeout*1000)), host]
             # don't use text=True, the async version will raise ValueError("text must be False"), who knows why
@@ -135,7 +135,7 @@ class Subprocess:
             return proc.returncode == 0
 
     @staticmethod
-    async def async_tailscale(args: list[str]):
+    async def tailscale(args: list[str]):
         command = ['tailscale']
         command.extend(args)
         creationflags = subprocess.CREATE_NO_WINDOW if platform.system().lower() == 'windows' else 0
@@ -264,7 +264,7 @@ class Device(Manageable):
 
     async def ping(self, availability_hint: bool | None = None):
         logger.debug("Pinging %s (%s)", LazyStr(self.get_class_name), self.host)
-        return await Subprocess.async_ping(self.host, timeout=2)
+        return await Subprocess.ping(self.host, timeout=2)
 
 class StateSerializer:
     BOOL = {False: Pingable.get_state_name(False), True: Pingable.get_state_name(True)}
@@ -546,11 +546,11 @@ class Tailscale():
 
 class LocalTailscaleManager(Manager):
     async def start(self):
-        if not (await Subprocess.async_tailscale(['up']))[0]:
+        if not (await Subprocess.tailscale(['up']))[0]:
             raise RuntimeError("Failed to start up local Tailscale")
 
     async def stop(self):
-        if not (await Subprocess.async_tailscale(['down']))[0]:
+        if not (await Subprocess.tailscale(['down']))[0]:
             raise RuntimeError("Failed to shut down local Tailscale")
 
 class LocalTailscale(Manageable):
@@ -562,7 +562,7 @@ class LocalTailscale(Manageable):
 
     async def ping(self, availability_hint: bool | None = None):
         logger.debug("Getting status of %s", LazyStr(self.get_class_name))
-        success, stdout = await Subprocess.async_tailscale(['status', '--json', '--peers=false', '--self=true'])
+        success, stdout = await Subprocess.tailscale(['status', '--json', '--peers=false', '--self=true'])
         if success:
             status = json.loads(stdout)
         return success and status['BackendState'] == 'Running' and status['Self']['Online']

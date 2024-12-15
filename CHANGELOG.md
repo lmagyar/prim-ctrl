@@ -2,6 +2,7 @@
 
 ## vNext
 
+- Refactor Subprocess
 - Do not catch keyboard exceptions
 
 ## 0.6.5
