@@ -959,14 +959,14 @@ class Control:
                             state = dict()
                         state[Control.CONNECTED] = Control.ZEROCONF if zeroconf_accessible else Control.REMOTE
                         print(StateSerializer.dumps(state))
-                    except:
+                    except Exception:
                         await _stop(state, stop_only_started = True)
                         raise
                 else:
                     try:
                         if not await phone.zeroconf_sftp.test():
                             await phone.zeroconf_sftp.start(10, 30)
-                    except:
+                    except Exception:
                         await _stop(None)
                         raise
             case 'stop':

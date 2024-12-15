@@ -1,5 +1,9 @@
 # Changelog
 
+## vNext
+
+- Do not catch keyboard exceptions
+
 ## 0.6.5
 
 - Delay Funnel's DNS configuration test (new secretfile sub-option)
