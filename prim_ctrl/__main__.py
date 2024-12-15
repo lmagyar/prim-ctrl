@@ -17,7 +17,9 @@ from pathlib import Path
 import aiohttp
 import dns.asyncresolver
 import dns.resolver
+import dns.rdatatype
 from aiohttp import ClientTimeout, web
+from aiohttp.abc import AbstractResolver as DnsResolver, ResolveResult
 from platformdirs import user_cache_dir
 from tailscale import Device as TailscaleDeviceInfo
 from tailscale import Tailscale as TailscaleApi
@@ -142,6 +144,62 @@ class Subprocess:
         proc = await asyncio.create_subprocess_exec(*command, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, creationflags=creationflags)
         stdout, _stderr = await proc.communicate()
         return proc.returncode == 0, stdout
+
+########
+
+# resolve directly at an outside DNS, because local magicDNS will return the tailnet IP
+# Note: aiohttp's AsyncResolver can't be used when asyncio.create_subprocess_exec is used
+#       aiohttp's AsyncResolver uses aiodns, that needs a SelectorEventLoop on Windows, and that's loop.subprocess_exec is not implemented, but required by asyncio.create_subprocess_exec
+class ExternalDnsResolver(DnsResolver):
+    EXTERNAL_DNS = '1.1.1.1'
+
+    def __init__(self):
+        self.dns_resolver = None
+        self.cache = dict[tuple[str, int, socket.AddressFamily], tuple[float, list[ResolveResult]]]()
+
+    async def resolve(self, host: str, port: int = 0, family: socket.AddressFamily = socket.AF_UNSPEC) -> list[ResolveResult]:
+        logger.debug("Resolving DNS for %s:%i (%s)", host, port, "ipv6" if family == socket.AF_INET6 else "ipv4")
+
+        key = (host, port, family)
+        expiration, hosts = self.cache.get(key, (None, None))
+        if expiration and hosts:
+            if time.time() < expiration:
+                logger.debug(" Found in cache")
+                return hosts
+            else:
+                del self.cache[key]
+        # in case of a long-running process, we should regularly delete other expired items also
+
+        try:
+            if not self.dns_resolver:
+                self.dns_resolver = await dns.asyncresolver.make_resolver_at(ExternalDnsResolver.EXTERNAL_DNS)
+            answer = await self.dns_resolver.resolve(host, rdtype=dns.rdatatype.AAAA if family == socket.AF_INET6 else dns.rdatatype.A)
+        except (dns.resolver.NXDOMAIN, dns.resolver.NoAnswer) as exc:
+            msg = exc.args[1] if len(exc.args) >= 1 else "DNS lookup failed"
+            raise OSError(None, msg) from exc
+
+        hosts = []
+        for rr in answer:
+            address = rr.to_text()
+            logger.debug(" Resolved as: %s", address)
+            hosts.append(
+                ResolveResult(
+                    hostname=host,
+                    host=address,
+                    port=port,
+                    family=family,
+                    proto=0,
+                    flags=socket.AI_NUMERICHOST,
+                )
+            )
+        if not hosts:
+            raise OSError(None, "DNS lookup failed")
+
+        self.cache[key] = (answer.expiration, hosts)
+        return hosts
+
+    async def close(self):
+        pass
 
 ########
 
@@ -592,11 +650,13 @@ class LocalTailscale(Manageable):
 class Funnel(Pingable):
     LOCAL_HOST = '127.0.0.1'
 
-    def __init__(self, tailnet: str, machine_name: str, local_port: int, local_path: str, external_port: int):
+    def __init__(self, tailnet: str, machine_name: str, local_port: int, local_path: str, external_port: int, dns_resolver: DnsResolver):
         self.machine_name = machine_name
         self.local_port = local_port
         self.external_name = f'{machine_name}.{tailnet}'
+        self.external_port = external_port
         self.external_url = f'https://{machine_name}.{tailnet}:{external_port}{local_path}'
+        self.dns_resolver = dns_resolver
 
     async def wait_for(self, available: bool, timeout: float):
         self._sleepcounter = 0
@@ -605,9 +665,8 @@ class Funnel(Pingable):
     async def ping(self, availability_hint: bool | None = None):
         logger.debug("Resolving DNS for %s (%s)", LazyStr(self.get_class_name), self.external_name)
         try:
-            # resolve directly at an outside DNS, because local magicDNS will return the tailnet IP
-            _answer = await dns.asyncresolver.resolve_at('1.1.1.1', self.external_name)
-        except (dns.resolver.NXDOMAIN, dns.resolver.NoAnswer):
+            _answer = await self.dns_resolver.resolve(self.external_name, self.external_port)
+        except Exception:
             return False
         return True
 
@@ -746,12 +805,12 @@ class WebhookPing(Pingable):
 class AutomatePhoneState(PhoneState):
     VARIABLE_STATE = 'state'
 
-    def __init__(self, session: aiohttp.ClientSession, webhooks: Webhooks, automate: Automate, funnel: Funnel):
-        self.session = session
+    def __init__(self, general_session: aiohttp.ClientSession, external_dns_session: aiohttp.ClientSession, webhooks: Webhooks, automate: Automate, funnel: Funnel):
         self.webhooks = webhooks
         self.automate = automate
         self.funnel = funnel
-        self.webhook_ping = WebhookPing(session, webhooks, funnel)
+        self.local_webhook_ping = WebhookPing(general_session, webhooks, funnel)
+        self.external_webhook_ping = WebhookPing(external_dns_session, webhooks, funnel)
 
     async def get(self, repeat: float, timeout: float):
         logger.info("Getting Phone state...")
@@ -761,7 +820,7 @@ class AutomatePhoneState(PhoneState):
         test_timeout = 10.0
         logger.debug("Testing Funnel with calling local webhook (timeout is %ds)", int(test_timeout))
         try:
-            await self.webhook_ping.wait_for(True, test_timeout)
+            await self.local_webhook_ping.wait_for(True, test_timeout)
         except Exception as e:
             raise RuntimeError(f"Local Funnel is not configured properly for {self.funnel.external_url}") from e
 
@@ -772,6 +831,15 @@ class AutomatePhoneState(PhoneState):
             await self.funnel.wait_for(True, test_timeout)
         except Exception as e:
             raise RuntimeError(f"Funnel's DNS is not configured by Tailscale for {self.funnel.external_name}") from e
+
+        # test external funnel + webhooks availability, ie. test funnel tcp forwarders
+        # it will NOT be routed locally, so the route is equivalent with / similar to what Automate will see
+        test_timeout = 30.0
+        logger.debug("Testing Funnel with calling external webhook (timeout is %ds)", int(test_timeout))
+        try:
+            await self.external_webhook_ping.wait_for(True, test_timeout)
+        except Exception as e:
+            raise RuntimeError(f"Funnel TCP forwarders are not configured by Tailscale for {self.funnel.external_name}") from e
 
         # get state
         logger.debug("Getting Phone state (repeat after %ds, timeout is %ds)", int(repeat), int(timeout))
@@ -1033,10 +1101,15 @@ class AutomateControl(Control):
     async def run(self, args):
         self.prepare(args)
 
+        external_dns_resolver = ExternalDnsResolver()
         async with (
+            aiohttp.ClientSession() as general_session,
             aiohttp.ClientSession(
                 # Automate messaging server prefers closing connections
-                connector=aiohttp.TCPConnector(force_close=True)) as session,
+                connector=aiohttp.TCPConnector(force_close=True)) as force_close_session,
+            aiohttp.ClientSession(
+                # Uses external DNS to access Funnet TCP forwarder servers instead of local MagicDNS route
+                connector=aiohttp.TCPConnector(resolver=external_dns_resolver)) as external_dns_session,
             AsyncZeroconf() as zeroconf
         ):
             service_cache = ServiceCache(Cache(Cache.PRIM_SYNC_APP_NAME))
@@ -1047,19 +1120,19 @@ class AutomateControl(Control):
             await service_browser.add_service_listener(service_listener)
 
             secrets = Secrets()
-            automate = Automate(secrets, session, args.automate_account, args.automate_device, args.automate_tokenfile)
+            automate = Automate(secrets, force_close_session, args.automate_account, args.automate_device, args.automate_tokenfile)
             remote_tailscale = RemoteTailscale(args.tailscale[0], args.tailscale[1], AutomateTailscaleManager(automate)) if args.tailscale else None
             zeroconf_pftpd = ZeroconfpFTPd(args.server_name, service_cache, service_resolver, AutomatepFTPdManager(automate))
             remote_pftpd = RemotepFTPd(remote_tailscale.host, int(args.tailscale[2]), zeroconf_pftpd.manager) if remote_tailscale else None
-            funnel = Funnel(remote_tailscale.tailnet, args.funnel[0], int(args.funnel[1]), args.funnel[2], int(args.funnel[3])) if remote_tailscale and args.funnel else None
+            funnel = Funnel(remote_tailscale.tailnet, args.funnel[0], int(args.funnel[1]), args.funnel[2], int(args.funnel[3]), external_dns_resolver) if remote_tailscale and args.funnel else None
             local_tailscale = (
-                LocalTailscale(Tailscale(secrets, session, remote_tailscale.tailnet, args.funnel[4]), funnel.machine_name) if remote_tailscale and funnel else
+                LocalTailscale(Tailscale(secrets, general_session, remote_tailscale.tailnet, args.funnel[4]), funnel.machine_name) if remote_tailscale and funnel else
                 LocalTailscale() if args.tailscale else
                 None)
 
             async with Webhooks(Funnel.LOCAL_HOST, funnel.local_port) if funnel else nullcontext() as webhooks:
                 local = Local(local_tailscale)
-                automate_phone_state = AutomatePhoneState(session, webhooks, automate, funnel) if funnel and webhooks else None
+                automate_phone_state = AutomatePhoneState(general_session, external_dns_session, webhooks, automate, funnel) if funnel and webhooks else None
                 phone = Phone(zeroconf_pftpd, remote_tailscale, remote_pftpd, automate_phone_state)
                 await self.execute(args, local, phone)
 

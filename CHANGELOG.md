@@ -2,6 +2,7 @@
 
 ## vNext
 
+- Test Funnel's external access after DNS configuration test
 - Refactor Subprocess
 - Do not catch keyboard exceptions
 
