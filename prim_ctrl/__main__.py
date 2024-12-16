@@ -294,7 +294,7 @@ class Service(Manageable):
         except (TimeoutError, socket.gaierror, ConnectionRefusedError):
             return False
         except Exception as e:
-            logger.debug("  Unexpected ping exception: %s", e.__str__())
+            logger.debug("  Unexpected ping exception: %s", LazyStr(e))
             raise
 
 class Device(Manageable):
@@ -505,7 +505,7 @@ class ZeroconfService(Manageable):
         except (TimeoutError, socket.gaierror, ConnectionRefusedError):
             return False
         except Exception as e:
-            logger.debug("  Unexpected ping exception: %s", e.__str__())
+            logger.debug("  Unexpected ping exception: %s", LazyStr(e))
             raise
 
 ########
