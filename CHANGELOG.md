@@ -2,6 +2,7 @@
 
 ## vNext
 
+- Specify private SSH key for authentication (new keyfile option)
 - Authenticate SFTP server's SSH keys to avoid using outdated cached zeroconf addresses
 - Test Funnel's external access after DNS configuration test
 - Refactor Subprocess

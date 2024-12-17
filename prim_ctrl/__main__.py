@@ -317,22 +317,35 @@ class Service(Manageable):
             raise
 
 class SshService(Service):
-    def __init__(  self, host: str, port: int, host_name: str, manager: Manager, **kw):
+    def __init__(  self, host: str, port: int, host_name: str, keyfile: str, manager: Manager, **kw):
         super().__init__(host=host, port=port, manager=manager, **kw)
         self.host_name = host_name
+        self.keyfile = keyfile
 
         self._connect_timeout = 3
-        self._special_exceptions = (asyncssh.misc.HostKeyNotVerifiable,)
+        self._special_exceptions = (asyncssh.misc.HostKeyNotVerifiable, asyncssh.misc.PermissionDenied)
         def _handle_special_exceptions(e: Exception):
-            e.add_note("Check your known_hosts file, see the documentation of prim-sync for more details")
+            if isinstance(e, asyncssh.misc.HostKeyNotVerifiable):
+                e.add_note("Check your known_hosts file, see the documentation of prim-sync for more details")
+            else:
+                e.add_note("Check your private SSH key file, see the documentation of prim-sync for more details")
         self._special_exceptions_handler = _handle_special_exceptions
 
     async def _connect(self, host: str, port: int):
         logger.debug(" Connecting with SSH to %s:%d (timeout is %ds)", host, port, self._connect_timeout)
+        def _client_key():
+            try:
+                return asyncssh.read_private_key(str(Path.home() / ".ssh" / self.keyfile))
+            except asyncssh.KeyImportError:
+                # if client key is encrypted, do not specify any key, by default asyncssh first will try to use an ssh-agent to find a decrypted key
+                # if client key is NOT encrypted, specify it, because asyncssh will try only the default key file names
+                # this is the exact opposite of Paramiko, where we can always specify a key, only when it is encrypted will Paramiko try an ssh-agent
+                return ()
         async with (
             # by default it will search for the known_hosts in str(Path.home() / ".ssh" / "known_hosts")
             asyncssh.connect(host, port, options=asyncssh.SSHClientConnectionOptions(
                 host_key_alias=self.host_name,
+                client_keys=_client_key(),
                 connect_timeout=self._connect_timeout)) as conn
         ):
             pass
@@ -536,8 +549,8 @@ class ZeroconfService(Service):
             self.port = port
 
 class ZeroconfSshService(ZeroconfService, SshService):
-    def __init__(self, service_name: str, service_cache: ServiceCache, service_resolver: ServiceResolver, manager: Manager):
-        super().__init__(service_name=service_name, service_cache=service_cache, service_resolver=service_resolver, host_name=service_name, manager=manager)
+    def __init__(self, service_name: str, service_cache: ServiceCache, service_resolver: ServiceResolver, keyfile: str, manager: Manager):
+        super().__init__(service_name=service_name, service_cache=service_cache, service_resolver=service_resolver, host_name=service_name, keyfile=keyfile, manager=manager)
 
 ########
 
@@ -564,13 +577,13 @@ class PftpdServiceListener(ServiceListener):
         pass
 
 class RemotePftpd(SshService):
-    def __init__(self, host: str, port: int, host_name: str, manager: Manager):
-        super().__init__(host, port, host_name, manager)
+    def __init__(self, host: str, port: int, host_name: str, keyfile: str, manager: Manager):
+        super().__init__(host, port, host_name, keyfile, manager)
         self.__qualname__ = "pFTPd"
 
 class ZeroconfPftpd(ZeroconfSshService):
-    def __init__(self, service_name: str, service_cache: ServiceCache, service_resolver: ServiceResolver, manager: Manager):
-        super().__init__(service_name, service_cache, service_resolver, manager)
+    def __init__(self, service_name: str, service_cache: ServiceCache, service_resolver: ServiceResolver, keyfile: str, manager: Manager):
+        super().__init__(service_name, service_cache, service_resolver, keyfile, manager)
         self.__qualname__ = "pFTPd"
 
 class RemoteTailscale(Device):
@@ -919,6 +932,7 @@ class Control:
     @staticmethod
     def setup_parser_arguments(parser):
         parser.add_argument('server_name', metavar='server-name', help="the Servername configuration option from Primitive FTPd app")
+        parser.add_argument('keyfile', help="private SSH key filename located under your .ssh folder, see the documentation of prim-sync for more details")
         parser.add_argument('-i', '--intent', choices=["test", "start", "stop"], help="what to do with the apps, default: test", default="test")
 
     @staticmethod
@@ -1154,8 +1168,8 @@ class AutomateControl(Control):
             automate = Automate(secrets, force_close_session, args.automate_account, args.automate_device, args.automate_tokenfile)
             remote_tailscale = RemoteTailscale(args.tailscale[0], args.tailscale[1], AutomateTailscaleManager(automate)) if args.tailscale else None
             pftpd_manager = AutomatePftpdManager(automate)
-            zeroconf_pftpd = ZeroconfPftpd(args.server_name, service_cache, service_resolver, pftpd_manager)
-            remote_pftpd = RemotePftpd(remote_tailscale.host, int(args.tailscale[2]), args.server_name, pftpd_manager) if remote_tailscale else None
+            zeroconf_pftpd = ZeroconfPftpd(args.server_name, service_cache, service_resolver, args.keyfile, pftpd_manager)
+            remote_pftpd = RemotePftpd(remote_tailscale.host, int(args.tailscale[2]), args.server_name, args.keyfile, pftpd_manager) if remote_tailscale else None
             funnel = Funnel(remote_tailscale.tailnet, args.funnel[0], int(args.funnel[1]), args.funnel[2], int(args.funnel[3]), external_dns_resolver) if remote_tailscale and args.funnel else None
             local_tailscale = (
                 LocalTailscale(Tailscale(secrets, general_session, remote_tailscale.tailnet, args.funnel[4]), funnel.machine_name) if remote_tailscale and funnel else
