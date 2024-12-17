@@ -1,6 +1,6 @@
 # Changelog
 
-## vNext
+## 0.7.0
 
 - Specify private SSH key for authentication (new keyfile option)
 - Authenticate SFTP server's SSH keys to avoid using outdated cached zeroconf addresses
