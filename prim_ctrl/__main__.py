@@ -546,7 +546,7 @@ class Phone:
         self.remote_sftp = remote_sftp
         self.state = state
 
-class pFTPdServiceListener(ServiceListener):
+class PftpdServiceListener(ServiceListener):
     def __init__(self, server_name: str, cache: ServiceCache):
         self.server_name = server_name
         self.cache = cache
@@ -561,12 +561,12 @@ class pFTPdServiceListener(ServiceListener):
     def del_service(self, service_name: str):
         pass
 
-class RemotepFTPd(SshService):
+class RemotePftpd(SshService):
     def __init__(self, host: str, port: int, host_name: str, manager: Manager):
         super().__init__(host, port, host_name, manager)
         self.__qualname__ = "pFTPd"
 
-class ZeroconfpFTPd(ZeroconfSshService):
+class ZeroconfPftpd(ZeroconfSshService):
     def __init__(self, service_name: str, service_cache: ServiceCache, service_resolver: ServiceResolver, manager: Manager):
         super().__init__(service_name, service_cache, service_resolver, manager)
         self.__qualname__ = "pFTPd"
@@ -792,7 +792,7 @@ class Automate:
         async with self.session.post(f'https://llamalab.com/automate/cloud/message', json=data) as response:
             await response.text()
 
-class AutomatepFTPdManager(Manager):
+class AutomatePftpdManager(Manager):
     def __init__(self, automate: Automate):
         self.automate = automate
 
@@ -1144,15 +1144,16 @@ class AutomateControl(Control):
             service_cache = ServiceCache(Cache(Cache.PRIM_SYNC_APP_NAME))
             service_resolver = SftpServiceResolver(zeroconf)
 
-            service_listener = pFTPdServiceListener(args.server_name, service_cache)
+            service_listener = PftpdServiceListener(args.server_name, service_cache)
             service_browser = SftpServiceBrowser(zeroconf)
             await service_browser.add_service_listener(service_listener)
 
             secrets = Secrets()
             automate = Automate(secrets, force_close_session, args.automate_account, args.automate_device, args.automate_tokenfile)
             remote_tailscale = RemoteTailscale(args.tailscale[0], args.tailscale[1], AutomateTailscaleManager(automate)) if args.tailscale else None
-            zeroconf_pftpd = ZeroconfpFTPd(args.server_name, service_cache, service_resolver, AutomatepFTPdManager(automate))
-            remote_pftpd = RemotepFTPd(remote_tailscale.host, int(args.tailscale[2]), args.server_name, zeroconf_pftpd.manager) if remote_tailscale else None
+            pftpd_manager = AutomatePftpdManager(automate)
+            zeroconf_pftpd = ZeroconfPftpd(args.server_name, service_cache, service_resolver, pftpd_manager)
+            remote_pftpd = RemotePftpd(remote_tailscale.host, int(args.tailscale[2]), args.server_name, pftpd_manager) if remote_tailscale else None
             funnel = Funnel(remote_tailscale.tailnet, args.funnel[0], int(args.funnel[1]), args.funnel[2], int(args.funnel[3]), external_dns_resolver) if remote_tailscale and args.funnel else None
             local_tailscale = (
                 LocalTailscale(Tailscale(secrets, general_session, remote_tailscale.tailnet, args.funnel[4]), funnel.machine_name) if remote_tailscale and funnel else
