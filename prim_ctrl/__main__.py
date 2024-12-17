@@ -540,7 +540,7 @@ class ZeroconfSshService(ZeroconfService, SshService):
 ########
 
 class Phone:
-    def __init__(self, zeroconf_sftp: ZeroconfService, vpn: Device | None, remote_sftp: Service | None, state: PhoneState | None):
+    def __init__(self, zeroconf_sftp: ZeroconfSshService, vpn: Device | None, remote_sftp: SshService | None, state: PhoneState | None):
         self.zeroconf_sftp = zeroconf_sftp
         self.vpn = vpn
         self.remote_sftp = remote_sftp
@@ -561,12 +561,12 @@ class pFTPdServiceListener(ServiceListener):
     def del_service(self, service_name: str):
         pass
 
-class RemotepFTPd(Service):
-    def __init__(self, host: str, port: int, manager: Manager):
-        super().__init__(host, port, manager)
+class RemotepFTPd(SshService):
+    def __init__(self, host: str, port: int, host_name: str, manager: Manager):
+        super().__init__(host, port, host_name, manager)
         self.__qualname__ = "pFTPd"
 
-class ZeroconfpFTPd(ZeroconfService):
+class ZeroconfpFTPd(ZeroconfSshService):
     def __init__(self, service_name: str, service_cache: ServiceCache, service_resolver: ServiceResolver, manager: Manager):
         super().__init__(service_name, service_cache, service_resolver, manager)
         self.__qualname__ = "pFTPd"
@@ -1152,7 +1152,7 @@ class AutomateControl(Control):
             automate = Automate(secrets, force_close_session, args.automate_account, args.automate_device, args.automate_tokenfile)
             remote_tailscale = RemoteTailscale(args.tailscale[0], args.tailscale[1], AutomateTailscaleManager(automate)) if args.tailscale else None
             zeroconf_pftpd = ZeroconfpFTPd(args.server_name, service_cache, service_resolver, AutomatepFTPdManager(automate))
-            remote_pftpd = RemotepFTPd(remote_tailscale.host, int(args.tailscale[2]), zeroconf_pftpd.manager) if remote_tailscale else None
+            remote_pftpd = RemotepFTPd(remote_tailscale.host, int(args.tailscale[2]), args.server_name, zeroconf_pftpd.manager) if remote_tailscale else None
             funnel = Funnel(remote_tailscale.tailnet, args.funnel[0], int(args.funnel[1]), args.funnel[2], int(args.funnel[3]), external_dns_resolver) if remote_tailscale and args.funnel else None
             local_tailscale = (
                 LocalTailscale(Tailscale(secrets, general_session, remote_tailscale.tailnet, args.funnel[4]), funnel.machine_name) if remote_tailscale and funnel else
