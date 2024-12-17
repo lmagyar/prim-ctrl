@@ -319,6 +319,7 @@ class Service(Manageable):
 class SshService(Service):
     def __init__(  self, host: str, port: int, host_name: str, manager: Manager, **kw):
         super().__init__(host=host, port=port, manager=manager, **kw)
+        self.host_name = host_name
 
         self._connect_timeout = 3
         self._special_exceptions = (asyncssh.misc.HostKeyNotVerifiable,)
@@ -326,13 +327,14 @@ class SshService(Service):
             e.add_note("Check your known_hosts file, see the documentation of prim-sync for more details")
         self._special_exceptions_handler = _handle_special_exceptions
 
-        known_hosts = asyncssh.read_known_hosts(str(Path.home() / '.ssh' / 'known_hosts'))
-        self.accepted_keys = known_hosts.match(host_name, '', None)
-
     async def _connect(self, host: str, port: int):
         logger.debug(" Connecting with SSH to %s:%d (timeout is %ds)", host, port, self._connect_timeout)
-        async with asyncssh.connect(host, port, options=asyncssh.SSHClientConnectionOptions(
-                known_hosts=self.accepted_keys, connect_timeout=self._connect_timeout)) as conn:
+        async with (
+            # by default it will search for the known_hosts in str(Path.home() / ".ssh" / "known_hosts")
+            asyncssh.connect(host, port, options=asyncssh.SSHClientConnectionOptions(
+                host_key_alias=self.host_name,
+                connect_timeout=self._connect_timeout)) as conn
+        ):
             pass
 
 class Device(Manageable):
