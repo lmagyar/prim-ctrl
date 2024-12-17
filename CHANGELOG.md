@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.7.0
+
+- Specify private SSH key for authentication (new keyfile option)
+- Authenticate SFTP server's SSH keys to avoid using outdated cached zeroconf addresses
+- Test Funnel's external access after DNS configuration test
+- Refactor Subprocess
+- Do not catch keyboard exceptions
+
 ## 0.6.5
 
 - Delay Funnel's DNS configuration test (new secretfile sub-option)

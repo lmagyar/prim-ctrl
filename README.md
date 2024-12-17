@@ -121,15 +121,15 @@ Notes:
 <details><summary>Ubuntu</summary>
 
 ```
-prim-ctrl Automate youraccount@gmail.com "SOME MANUFACTURER XXX" automate your-phone-pftpd --tailscale tailxxxx.ts.net your-phone 2222 --funnel your-laptop 12345 /prim-ctrl 8443 -t -i start -b
-prim-ctrl Automate youraccount@gmail.com "SOME MANUFACTURER XXX" automate your-phone-pftpd --tailscale tailxxxx.ts.net your-phone 2222 --funnel your-laptop 12345 /prim-ctrl 8443 -t -i stop -r ${PREV_STATE}
+prim-ctrl Automate youraccount@gmail.com "SOME MANUFACTURER XXX" automate your-phone-pftpd id_ed25519_sftp --tailscale tailxxxx.ts.net your-phone 2222 --funnel your-laptop 12345 /prim-ctrl 8443 tailscale-secretfile -t -i start -b
+prim-ctrl Automate youraccount@gmail.com "SOME MANUFACTURER XXX" automate your-phone-pftpd id_ed25519_sftp --tailscale tailxxxx.ts.net your-phone 2222 --funnel your-laptop 12345 /prim-ctrl 8443 tailscale-secretfile -t -i stop -r ${PREV_STATE}
 ```
 </details>
 <details><summary>Windows</summary>
 
 ```
-prim-ctrl Automate youraccount@gmail.com "SOME MANUFACTURER XXXX" automate your-phone-pftpd --tailscale tailxxxx.ts.net your-phone 2222 --funnel your-laptop 12345 /prim-ctrl 8443 -t -i start -b
-prim-ctrl Automate youraccount@gmail.com "SOME MANUFACTURER XXXX" automate your-phone-pftpd --tailscale tailxxxx.ts.net your-phone 2222 --funnel your-laptop 12345 /prim-ctrl 8443 -t -i stop -r !PREV_STATE!
+prim-ctrl Automate youraccount@gmail.com "SOME MANUFACTURER XXXX" automate your-phone-pftpd id_ed25519_sftp --tailscale tailxxxx.ts.net your-phone 2222 --funnel your-laptop 12345 /prim-ctrl 8443 tailscale-secretfile -t -i start -b
+prim-ctrl Automate youraccount@gmail.com "SOME MANUFACTURER XXXX" automate your-phone-pftpd id_ed25519_sftp --tailscale tailxxxx.ts.net your-phone 2222 --funnel your-laptop 12345 /prim-ctrl 8443 tailscale-secretfile -t -i stop -r !PREV_STATE!
 ```
 </details>
 
@@ -137,7 +137,7 @@ prim-ctrl Automate youraccount@gmail.com "SOME MANUFACTURER XXXX" automate your-
 
 ```
 usage: prim-ctrl Automate [-h] [-i {test,start,stop}] [-t] [-s] [--debug] [--tailscale tailnet remote-machine-name sftp-port] [--funnel local-machine-name local-port local-path external-port secretfile] [-ac] [-b] [-r STATE]
-                          automate-account automate-device automate-tokenfile server-name
+                          automate-account automate-device automate-tokenfile server-name keyfile
 
 Remote control of your phone's Primitive FTPd and optionally Tailscale app statuses via the Automate app, for more details see https://github.com/lmagyar/prim-ctrl
 
@@ -153,6 +153,7 @@ positional arguments:
   automate-tokenfile               filename containing Automates's Secret that located under your .secrets folder
                                    (generated on https://llamalab.com/automate/cloud, use the same Google account you set up on the Cloud receive block)
   server-name                      the Servername configuration option from Primitive FTPd app
+  keyfile                          private SSH key filename located under your .ssh folder, see the documentation of prim-sync for more details
 
 options:
   -h, --help                       show this help message and exit

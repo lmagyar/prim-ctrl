@@ -13,11 +13,15 @@ from abc import abstractmethod
 from contextlib import nullcontext, suppress
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Callable
 
 import aiohttp
+import asyncssh
 import dns.asyncresolver
 import dns.resolver
+import dns.rdatatype
 from aiohttp import ClientTimeout, web
+from aiohttp.abc import AbstractResolver as DnsResolver, ResolveResult
 from platformdirs import user_cache_dir
 from tailscale import Device as TailscaleDeviceInfo
 from tailscale import Tailscale as TailscaleApi
@@ -107,21 +111,21 @@ logger = Logger(Path(sys.argv[0]).name)
 
 class Subprocess:
 
-    # based on https://stackoverflow.com/a/55656177/2755656
-    @staticmethod
-    def sync_ping(host, packets: int = 1, timeout: float = 1):
-        if platform.system().lower() == 'windows':
-            command = ['ping', '-n', str(packets), '-w', str(int(timeout*1000)), host]
-            # don't use text=True, the async version will raise ValueError("text must be False"), who knows why
-            result = subprocess.run(command, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, creationflags=subprocess.CREATE_NO_WINDOW)
-            return result.returncode == 0 and b'TTL=' in result.stdout
-        else:
-            command = ['ping', '-c', str(packets), '-W', str(int(timeout)), host]
-            result = subprocess.run(command, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            return result.returncode == 0
+    # # based on https://stackoverflow.com/a/55656177/2755656
+    # @staticmethod
+    # def sync_ping(host, packets: int = 1, timeout: float = 1):
+    #     if platform.system().lower() == 'windows':
+    #         command = ['ping', '-n', str(packets), '-w', str(int(timeout*1000)), host]
+    #         # don't use text=True, the async version will raise ValueError("text must be False"), who knows why
+    #         result = subprocess.run(command, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, creationflags=subprocess.CREATE_NO_WINDOW)
+    #         return result.returncode == 0 and b'TTL=' in result.stdout
+    #     else:
+    #         command = ['ping', '-c', str(packets), '-W', str(int(timeout)), host]
+    #         result = subprocess.run(command, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    #         return result.returncode == 0
 
     @staticmethod
-    async def async_ping(host, packets: int = 1, timeout: float = 1):
+    async def ping(host, packets: int = 1, timeout: float = 1):
         if platform.system().lower() == 'windows':
             command = ['ping', '-n', str(packets), '-w', str(int(timeout*1000)), host]
             # don't use text=True, the async version will raise ValueError("text must be False"), who knows why
@@ -135,7 +139,7 @@ class Subprocess:
             return proc.returncode == 0
 
     @staticmethod
-    async def async_tailscale(args: list[str]):
+    async def tailscale(args: list[str]):
         command = ['tailscale']
         command.extend(args)
         creationflags = subprocess.CREATE_NO_WINDOW if platform.system().lower() == 'windows' else 0
@@ -145,23 +149,61 @@ class Subprocess:
 
 ########
 
-class Secrets:
-    DIR_NAME = '.secrets'
+# resolve directly at an outside DNS, because local magicDNS will return the tailnet IP
+# Note: aiohttp's AsyncResolver can't be used when asyncio.create_subprocess_exec is used
+#       aiohttp's AsyncResolver uses aiodns, that needs a SelectorEventLoop on Windows, and that's loop.subprocess_exec is not implemented, but required by asyncio.create_subprocess_exec
+class ExternalDnsResolver(DnsResolver):
+    EXTERNAL_DNS = '1.1.1.1'
 
     def __init__(self):
-        self.secrets_path = Path.home() / Secrets.DIR_NAME
+        self.dns_resolver = None
+        self.cache = dict[tuple[str, int, socket.AddressFamily], tuple[float, list[ResolveResult]]]()
 
-    def get(self, tokenfile: str):
-        with open(str(self.secrets_path / tokenfile), 'rt') as file:
-            return file.readline().rstrip()
+    async def resolve(self, host: str, port: int = 0, family: socket.AddressFamily = socket.AF_UNSPEC) -> list[ResolveResult]:
+        logger.debug("Resolving DNS for %s:%i (%s)", host, port, "ipv6" if family == socket.AF_INET6 else "ipv4")
 
-    def set(self, tokenfile: str, token: str):
-        self.secrets_path.mkdir(parents=True, exist_ok=True)
-        with open(str(self.secrets_path / tokenfile), 'wt') as file:
-            file.write(token)
+        key = (host, port, family)
+        expiration, hosts = self.cache.get(key, (None, None))
+        if expiration and hosts:
+            if time.time() < expiration:
+                logger.debug(" Found in cache")
+                return hosts
+            else:
+                del self.cache[key]
+        # in case of a long-running process, we should regularly delete other expired items also
 
-    def get_age(self, tokenfile: str):
-        return (datetime.now(timezone.utc) - datetime.fromtimestamp(os.stat(str(self.secrets_path / tokenfile)).st_mtime, timezone.utc)).total_seconds()
+        try:
+            if not self.dns_resolver:
+                self.dns_resolver = await dns.asyncresolver.make_resolver_at(ExternalDnsResolver.EXTERNAL_DNS)
+            answer = await self.dns_resolver.resolve(host, rdtype=dns.rdatatype.AAAA if family == socket.AF_INET6 else dns.rdatatype.A)
+        except (dns.resolver.NXDOMAIN, dns.resolver.NoAnswer) as exc:
+            msg = exc.args[1] if len(exc.args) >= 1 else "DNS lookup failed"
+            raise OSError(None, msg) from exc
+
+        hosts = []
+        for rr in answer:
+            address = rr.to_text()
+            logger.debug(" Resolved as: %s", address)
+            hosts.append(
+                ResolveResult(
+                    hostname=host,
+                    host=address,
+                    port=port,
+                    family=family,
+                    proto=0,
+                    flags=socket.AI_NUMERICHOST,
+                )
+            )
+        if not hosts:
+            raise OSError(None, "DNS lookup failed")
+
+        self.cache[key] = (answer.expiration, hosts)
+        return hosts
+
+    async def close(self):
+        pass
+
+########
 
 class Pingable:
     @abstractmethod
@@ -240,22 +282,73 @@ class Service(Manageable):
         self.host = host
         self.port = port
 
-    async def ping(self, _availability_hint: bool | None = None):
-        async def _connect(connect_timeout: float):
-            logger.debug(" Connecting to %s on port %d (timeout is %ds)", self.host, self.port, connect_timeout)
-            async with asyncio.timeout(connect_timeout):
-                return await asyncio.open_connection(self.host, self.port)
-        logger.debug("Pinging %s (%s:%d)", LazyStr(self.get_class_name), self.host, self.port)
-        try:
-            _reader, writer = await _connect(2)
+        self._connect_timeout = 2
+        self._special_exceptions = ()
+        self._special_exceptions_handler : Callable[[Exception], None] | None = None
+
+    async def _connect(self, host: str, port: int):
+        logger.debug(" Connecting with TCP to %s:%d (timeout is %ds)", host, port, self._connect_timeout)
+        async with asyncio.timeout(self._connect_timeout):
+            _reader, writer = await asyncio.open_connection(host, port)
             writer.close()
             await writer.wait_closed()
+
+    async def _ping(self, availability_hint: bool | None = None):
+        logger.debug("Pinging %s (%s:%s)", LazyStr(self.get_class_name), str(self.host), str(self.port))
+        await self._connect(self.host, self.port)
+
+    async def ping(self, availability_hint: bool | None = None):
+        try:
+            await self._ping(availability_hint)
             return True
         except (TimeoutError, socket.gaierror, ConnectionRefusedError):
             return False
+        except self._special_exceptions as e:
+            if availability_hint is None or availability_hint:
+                if self._special_exceptions_handler:
+                    self._special_exceptions_handler(e)
+                else:
+                    logger.debug("  Unexpected ping exception: %s", LazyStr(e))
+                raise
+            else:
+                return False
         except Exception as e:
-            logger.debug("  Unexpected ping exception: %s", e.__str__())
+            logger.debug("  Unexpected ping exception: %s", LazyStr(e))
             raise
+
+class SshService(Service):
+    def __init__(  self, host: str, port: int, host_name: str, keyfile: str, manager: Manager, **kw):
+        super().__init__(host=host, port=port, manager=manager, **kw)
+        self.host_name = host_name
+        self.keyfile = keyfile
+
+        self._connect_timeout = 3
+        self._special_exceptions = (asyncssh.misc.HostKeyNotVerifiable, asyncssh.misc.PermissionDenied)
+        def _handle_special_exceptions(e: Exception):
+            if isinstance(e, asyncssh.misc.HostKeyNotVerifiable):
+                e.add_note("Check your known_hosts file, see the documentation of prim-sync for more details")
+            else:
+                e.add_note("Check your private SSH key file, see the documentation of prim-sync for more details")
+        self._special_exceptions_handler = _handle_special_exceptions
+
+    async def _connect(self, host: str, port: int):
+        logger.debug(" Connecting with SSH to %s:%d (timeout is %ds)", host, port, self._connect_timeout)
+        def _client_key():
+            try:
+                return asyncssh.read_private_key(str(Path.home() / ".ssh" / self.keyfile))
+            except asyncssh.KeyImportError:
+                # if client key is encrypted, do not specify any key, by default asyncssh first will try to use an ssh-agent to find a decrypted key
+                # if client key is NOT encrypted, specify it, because asyncssh will try only the default key file names
+                # this is the exact opposite of Paramiko, where we can always specify a key, only when it is encrypted will Paramiko try an ssh-agent
+                return ()
+        async with (
+            # by default it will search for the known_hosts in str(Path.home() / ".ssh" / "known_hosts")
+            asyncssh.connect(host, port, options=asyncssh.SSHClientConnectionOptions(
+                host_key_alias=self.host_name,
+                client_keys=_client_key(),
+                connect_timeout=self._connect_timeout)) as conn
+        ):
+            pass
 
 class Device(Manageable):
     def __init__(self, host: str, manager: Manager):
@@ -264,7 +357,7 @@ class Device(Manageable):
 
     async def ping(self, availability_hint: bool | None = None):
         logger.debug("Pinging %s (%s)", LazyStr(self.get_class_name), self.host)
-        return await Subprocess.async_ping(self.host, timeout=2)
+        return await Subprocess.ping(self.host, timeout=2)
 
 class StateSerializer:
     BOOL = {False: Pingable.get_state_name(False), True: Pingable.get_state_name(True)}
@@ -300,6 +393,24 @@ class PhoneState:
 
 ########
 
+class Secrets:
+    DIR_NAME = '.secrets'
+
+    def __init__(self):
+        self.secrets_path = Path.home() / Secrets.DIR_NAME
+
+    def get(self, tokenfile: str):
+        with open(str(self.secrets_path / tokenfile), 'rt') as file:
+            return file.readline().rstrip()
+
+    def set(self, tokenfile: str, token: str):
+        self.secrets_path.mkdir(parents=True, exist_ok=True)
+        with open(str(self.secrets_path / tokenfile), 'wt') as file:
+            file.write(token)
+
+    def get_age(self, tokenfile: str):
+        return (datetime.now(timezone.utc) - datetime.fromtimestamp(os.stat(str(self.secrets_path / tokenfile)).st_mtime, timezone.utc)).total_seconds()
+
 class Cache:
     PRIM_SYNC_APP_NAME = 'prim-sync'
 
@@ -320,6 +431,8 @@ class Cache:
                 return file.readline().rstrip()
         else:
             return None
+
+########
 
 class ServiceCache:
     def __init__(self, cache: Cache):
@@ -398,66 +511,57 @@ class SftpServiceBrowser(ServiceBrowser):
     def __init__(self, zeroconf: AsyncZeroconf):
         super().__init__(zeroconf, SFTP_SERVICE_TYPE)
 
-class ZeroconfService(Manageable):
-    def __init__(self, service_name: str, service_cache: ServiceCache, service_resolver: ServiceResolver, manager: Manager):
-        super().__init__(manager)
+class ZeroconfService(Service):
+    def __init__(self, service_name: str, service_cache: ServiceCache, service_resolver: ServiceResolver, manager: Manager, **kw):
+        super().__init__(host=None, port=None, manager=manager, **kw) # type: ignore
         self.service_name = service_name
-        self.host = None
-        self.port = None
         self.service_cache = service_cache
         self.service_resolver = service_resolver
 
-    async def ping(self, availability_hint: bool | None = None):
-        async def _connect(connect_timeout: float, resolve_timeout: float):
-            async def _asyncio_open_connection(host: str, port: int, timeout: float):
-                logger.debug(" Connecting to %s on port %d (timeout is %ds)", host, port, timeout)
-                async with asyncio.timeout(timeout):
-                    return await asyncio.open_connection(host, port)
-            async def _service_resolver_get(service_name: str, timeout: float):
-                logger.debug(" Resolving %s (timeout is %ds)", service_name, timeout)
-                return await self.service_resolver.get(service_name, timeout)
-            if self.host and self.port:
-                return await _asyncio_open_connection(self.host, self.port, connect_timeout)
+        self._resolve_timeout = 6
+
+    async def _resolve(self):
+        logger.debug(" Resolving %s (timeout is %ds)", self.service_name, self._resolve_timeout)
+        return await self.service_resolver.get(self.service_name, self._resolve_timeout)
+
+    async def _ping(self, availability_hint: bool | None = None):
+        logger.debug("Pinging %s (%s - %s:%s)", LazyStr(self.get_class_name), self.service_name, str(self.host), str(self.port))
+        if self.host and self.port:
+            await self._connect(self.host, self.port)
+        else:
             host, port = self.service_cache.get(self.service_name)
             if host and port:
                 try:
-                    reader_writer = await _asyncio_open_connection(host, port, connect_timeout)
+                    await self._connect(host, port)
                     self.host = host
                     self.port = port
-                    return reader_writer
-                except (TimeoutError, socket.gaierror, ConnectionRefusedError):
+                    return
+                except (TimeoutError, socket.gaierror, ConnectionRefusedError) + self._special_exceptions as e:
                     if availability_hint is None or availability_hint:
-                        pass
+                        logger.debug("  %s", LazyStr(repr, e))
                     else:
                         raise
-            host, port = await _service_resolver_get(self.service_name, resolve_timeout)
-            reader_writer = await _asyncio_open_connection(host, port, connect_timeout)
+            host, port = await self._resolve()
+            await self._connect(host, port)
+            # if resolution is happened through the ServiceListener, cache is already set, but resolution can happen through request/response also
             self.service_cache.set(self.service_name, host, port)
             self.host = host
             self.port = port
-            return reader_writer
-        logger.debug("Pinging %s (%s - %s:%s)", LazyStr(self.get_class_name), self.service_name, str(self.host), str(self.port))
-        try:
-            _reader, writer = await _connect(2, 6)
-            writer.close()
-            await writer.wait_closed()
-            return True
-        except (TimeoutError, socket.gaierror, ConnectionRefusedError):
-            return False
-        except Exception as e:
-            logger.debug("  Unexpected ping exception: %s", e.__str__())
-            raise
+
+class ZeroconfSshService(ZeroconfService, SshService):
+    def __init__(self, service_name: str, service_cache: ServiceCache, service_resolver: ServiceResolver, keyfile: str, manager: Manager):
+        super().__init__(service_name=service_name, service_cache=service_cache, service_resolver=service_resolver, host_name=service_name, keyfile=keyfile, manager=manager)
 
 ########
 
 class Phone:
-    def __init__(self, zeroconf_sftp: ZeroconfService, vpn: Device | None, remote_sftp: Service | None, state: PhoneState | None):
+    def __init__(self, zeroconf_sftp: ZeroconfSshService, vpn: Device | None, remote_sftp: SshService | None, state: PhoneState | None):
         self.zeroconf_sftp = zeroconf_sftp
         self.vpn = vpn
         self.remote_sftp = remote_sftp
         self.state = state
 
-class pFTPdServiceListener(ServiceListener):
+class PftpdServiceListener(ServiceListener):
     def __init__(self, server_name: str, cache: ServiceCache):
         self.server_name = server_name
         self.cache = cache
@@ -472,14 +576,14 @@ class pFTPdServiceListener(ServiceListener):
     def del_service(self, service_name: str):
         pass
 
-class RemotepFTPd(Service):
-    def __init__(self, host: str, port: int, manager: Manager):
-        super().__init__(host, port, manager)
+class RemotePftpd(SshService):
+    def __init__(self, host: str, port: int, host_name: str, keyfile: str, manager: Manager):
+        super().__init__(host, port, host_name, keyfile, manager)
         self.__qualname__ = "pFTPd"
 
-class ZeroconfpFTPd(ZeroconfService):
-    def __init__(self, service_name: str, service_cache: ServiceCache, service_resolver: ServiceResolver, manager: Manager):
-        super().__init__(service_name, service_cache, service_resolver, manager)
+class ZeroconfPftpd(ZeroconfSshService):
+    def __init__(self, service_name: str, service_cache: ServiceCache, service_resolver: ServiceResolver, keyfile: str, manager: Manager):
+        super().__init__(service_name, service_cache, service_resolver, keyfile, manager)
         self.__qualname__ = "pFTPd"
 
 class RemoteTailscale(Device):
@@ -546,11 +650,11 @@ class Tailscale():
 
 class LocalTailscaleManager(Manager):
     async def start(self):
-        if not (await Subprocess.async_tailscale(['up']))[0]:
+        if not (await Subprocess.tailscale(['up']))[0]:
             raise RuntimeError("Failed to start up local Tailscale")
 
     async def stop(self):
-        if not (await Subprocess.async_tailscale(['down']))[0]:
+        if not (await Subprocess.tailscale(['down']))[0]:
             raise RuntimeError("Failed to shut down local Tailscale")
 
 class LocalTailscale(Manageable):
@@ -562,7 +666,7 @@ class LocalTailscale(Manageable):
 
     async def ping(self, availability_hint: bool | None = None):
         logger.debug("Getting status of %s", LazyStr(self.get_class_name))
-        success, stdout = await Subprocess.async_tailscale(['status', '--json', '--peers=false', '--self=true'])
+        success, stdout = await Subprocess.tailscale(['status', '--json', '--peers=false', '--self=true'])
         if success:
             status = json.loads(stdout)
         return success and status['BackendState'] == 'Running' and status['Self']['Online']
@@ -590,11 +694,13 @@ class LocalTailscale(Manageable):
 class Funnel(Pingable):
     LOCAL_HOST = '127.0.0.1'
 
-    def __init__(self, tailnet: str, machine_name: str, local_port: int, local_path: str, external_port: int):
+    def __init__(self, tailnet: str, machine_name: str, local_port: int, local_path: str, external_port: int, dns_resolver: DnsResolver):
         self.machine_name = machine_name
         self.local_port = local_port
         self.external_name = f'{machine_name}.{tailnet}'
+        self.external_port = external_port
         self.external_url = f'https://{machine_name}.{tailnet}:{external_port}{local_path}'
+        self.dns_resolver = dns_resolver
 
     async def wait_for(self, available: bool, timeout: float):
         self._sleepcounter = 0
@@ -603,9 +709,8 @@ class Funnel(Pingable):
     async def ping(self, availability_hint: bool | None = None):
         logger.debug("Resolving DNS for %s (%s)", LazyStr(self.get_class_name), self.external_name)
         try:
-            # resolve directly at an outside DNS, because local magicDNS will return the tailnet IP
-            _answer = await dns.asyncresolver.resolve_at('1.1.1.1', self.external_name)
-        except (dns.resolver.NXDOMAIN, dns.resolver.NoAnswer):
+            _answer = await self.dns_resolver.resolve(self.external_name, self.external_port)
+        except Exception:
             return False
         return True
 
@@ -702,7 +807,7 @@ class Automate:
         async with self.session.post(f'https://llamalab.com/automate/cloud/message', json=data) as response:
             await response.text()
 
-class AutomatepFTPdManager(Manager):
+class AutomatePftpdManager(Manager):
     def __init__(self, automate: Automate):
         self.automate = automate
 
@@ -744,12 +849,12 @@ class WebhookPing(Pingable):
 class AutomatePhoneState(PhoneState):
     VARIABLE_STATE = 'state'
 
-    def __init__(self, session: aiohttp.ClientSession, webhooks: Webhooks, automate: Automate, funnel: Funnel):
-        self.session = session
+    def __init__(self, general_session: aiohttp.ClientSession, external_dns_session: aiohttp.ClientSession, webhooks: Webhooks, automate: Automate, funnel: Funnel):
         self.webhooks = webhooks
         self.automate = automate
         self.funnel = funnel
-        self.webhook_ping = WebhookPing(session, webhooks, funnel)
+        self.local_webhook_ping = WebhookPing(general_session, webhooks, funnel)
+        self.external_webhook_ping = WebhookPing(external_dns_session, webhooks, funnel)
 
     async def get(self, repeat: float, timeout: float):
         logger.info("Getting Phone state...")
@@ -759,7 +864,7 @@ class AutomatePhoneState(PhoneState):
         test_timeout = 10.0
         logger.debug("Testing Funnel with calling local webhook (timeout is %ds)", int(test_timeout))
         try:
-            await self.webhook_ping.wait_for(True, test_timeout)
+            await self.local_webhook_ping.wait_for(True, test_timeout)
         except Exception as e:
             raise RuntimeError(f"Local Funnel is not configured properly for {self.funnel.external_url}") from e
 
@@ -770,6 +875,15 @@ class AutomatePhoneState(PhoneState):
             await self.funnel.wait_for(True, test_timeout)
         except Exception as e:
             raise RuntimeError(f"Funnel's DNS is not configured by Tailscale for {self.funnel.external_name}") from e
+
+        # test external funnel + webhooks availability, ie. test funnel tcp forwarders
+        # it will NOT be routed locally, so the route is equivalent with / similar to what Automate will see
+        test_timeout = 30.0
+        logger.debug("Testing Funnel with calling external webhook (timeout is %ds)", int(test_timeout))
+        try:
+            await self.external_webhook_ping.wait_for(True, test_timeout)
+        except Exception as e:
+            raise RuntimeError(f"Funnel TCP forwarders are not configured by Tailscale for {self.funnel.external_name}") from e
 
         # get state
         logger.debug("Getting Phone state (repeat after %ds, timeout is %ds)", int(repeat), int(timeout))
@@ -818,6 +932,7 @@ class Control:
     @staticmethod
     def setup_parser_arguments(parser):
         parser.add_argument('server_name', metavar='server-name', help="the Servername configuration option from Primitive FTPd app")
+        parser.add_argument('keyfile', help="private SSH key filename located under your .ssh folder, see the documentation of prim-sync for more details")
         parser.add_argument('-i', '--intent', choices=["test", "start", "stop"], help="what to do with the apps, default: test", default="test")
 
     @staticmethod
@@ -959,14 +1074,14 @@ class Control:
                             state = dict()
                         state[Control.CONNECTED] = Control.ZEROCONF if zeroconf_accessible else Control.REMOTE
                         print(StateSerializer.dumps(state))
-                    except:
+                    except Exception:
                         await _stop(state, stop_only_started = True)
                         raise
                 else:
                     try:
                         if not await phone.zeroconf_sftp.test():
                             await phone.zeroconf_sftp.start(10, 30)
-                    except:
+                    except Exception:
                         await _stop(None)
                         raise
             case 'stop':
@@ -1031,32 +1146,39 @@ class AutomateControl(Control):
     async def run(self, args):
         self.prepare(args)
 
+        external_dns_resolver = ExternalDnsResolver()
         async with (
+            aiohttp.ClientSession() as general_session,
             aiohttp.ClientSession(
                 # Automate messaging server prefers closing connections
-                connector=aiohttp.TCPConnector(force_close=True)) as session,
+                connector=aiohttp.TCPConnector(force_close=True)) as force_close_session,
+            aiohttp.ClientSession(
+                # Uses external DNS to access Funnet TCP forwarder servers instead of local MagicDNS route
+                connector=aiohttp.TCPConnector(resolver=external_dns_resolver)) as external_dns_session,
             AsyncZeroconf() as zeroconf
         ):
             service_cache = ServiceCache(Cache(Cache.PRIM_SYNC_APP_NAME))
             service_resolver = SftpServiceResolver(zeroconf)
-            service_listener = pFTPdServiceListener(args.server_name, service_cache)
+
+            service_listener = PftpdServiceListener(args.server_name, service_cache)
             service_browser = SftpServiceBrowser(zeroconf)
             await service_browser.add_service_listener(service_listener)
 
             secrets = Secrets()
-            automate = Automate(secrets, session, args.automate_account, args.automate_device, args.automate_tokenfile)
+            automate = Automate(secrets, force_close_session, args.automate_account, args.automate_device, args.automate_tokenfile)
             remote_tailscale = RemoteTailscale(args.tailscale[0], args.tailscale[1], AutomateTailscaleManager(automate)) if args.tailscale else None
-            zeroconf_pftpd = ZeroconfpFTPd(args.server_name, service_cache, service_resolver, AutomatepFTPdManager(automate))
-            remote_pftpd = RemotepFTPd(remote_tailscale.host, int(args.tailscale[2]), zeroconf_pftpd.manager) if remote_tailscale else None
-            funnel = Funnel(remote_tailscale.tailnet, args.funnel[0], int(args.funnel[1]), args.funnel[2], int(args.funnel[3])) if remote_tailscale and args.funnel else None
+            pftpd_manager = AutomatePftpdManager(automate)
+            zeroconf_pftpd = ZeroconfPftpd(args.server_name, service_cache, service_resolver, args.keyfile, pftpd_manager)
+            remote_pftpd = RemotePftpd(remote_tailscale.host, int(args.tailscale[2]), args.server_name, args.keyfile, pftpd_manager) if remote_tailscale else None
+            funnel = Funnel(remote_tailscale.tailnet, args.funnel[0], int(args.funnel[1]), args.funnel[2], int(args.funnel[3]), external_dns_resolver) if remote_tailscale and args.funnel else None
             local_tailscale = (
-                LocalTailscale(Tailscale(secrets, session, remote_tailscale.tailnet, args.funnel[4]), funnel.machine_name) if remote_tailscale and funnel else
+                LocalTailscale(Tailscale(secrets, general_session, remote_tailscale.tailnet, args.funnel[4]), funnel.machine_name) if remote_tailscale and funnel else
                 LocalTailscale() if args.tailscale else
                 None)
 
             async with Webhooks(Funnel.LOCAL_HOST, funnel.local_port) if funnel else nullcontext() as webhooks:
                 local = Local(local_tailscale)
-                automate_phone_state = AutomatePhoneState(session, webhooks, automate, funnel) if funnel and webhooks else None
+                automate_phone_state = AutomatePhoneState(general_session, external_dns_session, webhooks, automate, funnel) if funnel and webhooks else None
                 phone = Phone(zeroconf_pftpd, remote_tailscale, remote_pftpd, automate_phone_state)
                 await self.execute(args, local, phone)
 
