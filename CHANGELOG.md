@@ -2,6 +2,7 @@
 
 ## vNext
 
+- Authenticate SFTP server's SSH keys to avoid using outdated cached zeroconf addresses
 - Test Funnel's external access after DNS configuration test
 - Refactor Subprocess
 - Do not catch keyboard exceptions

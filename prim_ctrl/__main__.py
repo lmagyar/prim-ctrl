@@ -13,8 +13,10 @@ from abc import abstractmethod
 from contextlib import nullcontext, suppress
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Callable
 
 import aiohttp
+import asyncssh
 import dns.asyncresolver
 import dns.resolver
 import dns.rdatatype
@@ -280,22 +282,58 @@ class Service(Manageable):
         self.host = host
         self.port = port
 
-    async def ping(self, _availability_hint: bool | None = None):
-        async def _connect(connect_timeout: float):
-            logger.debug(" Connecting to %s on port %d (timeout is %ds)", self.host, self.port, connect_timeout)
-            async with asyncio.timeout(connect_timeout):
-                return await asyncio.open_connection(self.host, self.port)
-        logger.debug("Pinging %s (%s:%d)", LazyStr(self.get_class_name), self.host, self.port)
-        try:
-            _reader, writer = await _connect(2)
+        self._connect_timeout = 2
+        self._special_exceptions = ()
+        self._special_exceptions_handler : Callable[[Exception], None] | None = None
+
+    async def _connect(self, host: str, port: int):
+        logger.debug(" Connecting with TCP to %s:%d (timeout is %ds)", host, port, self._connect_timeout)
+        async with asyncio.timeout(self._connect_timeout):
+            _reader, writer = await asyncio.open_connection(host, port)
             writer.close()
             await writer.wait_closed()
+
+    async def _ping(self, availability_hint: bool | None = None):
+        logger.debug("Pinging %s (%s:%s)", LazyStr(self.get_class_name), str(self.host), str(self.port))
+        await self._connect(self.host, self.port)
+
+    async def ping(self, availability_hint: bool | None = None):
+        try:
+            await self._ping(availability_hint)
             return True
         except (TimeoutError, socket.gaierror, ConnectionRefusedError):
             return False
+        except self._special_exceptions as e:
+            if availability_hint is None or availability_hint:
+                if self._special_exceptions_handler:
+                    self._special_exceptions_handler(e)
+                else:
+                    logger.debug("  Unexpected ping exception: %s", LazyStr(e))
+                raise
+            else:
+                return False
         except Exception as e:
             logger.debug("  Unexpected ping exception: %s", LazyStr(e))
             raise
+
+class SshService(Service):
+    def __init__(  self, host: str, port: int, host_name: str, manager: Manager, **kw):
+        super().__init__(host=host, port=port, manager=manager, **kw)
+
+        self._connect_timeout = 3
+        self._special_exceptions = (asyncssh.misc.HostKeyNotVerifiable,)
+        def _handle_special_exceptions(e: Exception):
+            e.add_note("Check your known_hosts file, see the documentation of prim-sync for more details")
+        self._special_exceptions_handler = _handle_special_exceptions
+
+        known_hosts = asyncssh.read_known_hosts(str(Path.home() / '.ssh' / 'known_hosts'))
+        self.accepted_keys = known_hosts.match(host_name, '', None)
+
+    async def _connect(self, host: str, port: int):
+        logger.debug(" Connecting with SSH to %s:%d (timeout is %ds)", host, port, self._connect_timeout)
+        async with asyncssh.connect(host, port, options=asyncssh.SSHClientConnectionOptions(
+                known_hosts=self.accepted_keys, connect_timeout=self._connect_timeout)) as conn:
+            pass
 
 class Device(Manageable):
     def __init__(self, host: str, manager: Manager):
@@ -458,55 +496,46 @@ class SftpServiceBrowser(ServiceBrowser):
     def __init__(self, zeroconf: AsyncZeroconf):
         super().__init__(zeroconf, SFTP_SERVICE_TYPE)
 
-class ZeroconfService(Manageable):
-    def __init__(self, service_name: str, service_cache: ServiceCache, service_resolver: ServiceResolver, manager: Manager):
-        super().__init__(manager)
+class ZeroconfService(Service):
+    def __init__(self, service_name: str, service_cache: ServiceCache, service_resolver: ServiceResolver, manager: Manager, **kw):
+        super().__init__(host=None, port=None, manager=manager, **kw) # type: ignore
         self.service_name = service_name
-        self.host = None
-        self.port = None
         self.service_cache = service_cache
         self.service_resolver = service_resolver
 
-    async def ping(self, availability_hint: bool | None = None):
-        async def _connect(connect_timeout: float, resolve_timeout: float):
-            async def _asyncio_open_connection(host: str, port: int, timeout: float):
-                logger.debug(" Connecting to %s on port %d (timeout is %ds)", host, port, timeout)
-                async with asyncio.timeout(timeout):
-                    return await asyncio.open_connection(host, port)
-            async def _service_resolver_get(service_name: str, timeout: float):
-                logger.debug(" Resolving %s (timeout is %ds)", service_name, timeout)
-                return await self.service_resolver.get(service_name, timeout)
-            if self.host and self.port:
-                return await _asyncio_open_connection(self.host, self.port, connect_timeout)
+        self._resolve_timeout = 6
+
+    async def _resolve(self):
+        logger.debug(" Resolving %s (timeout is %ds)", self.service_name, self._resolve_timeout)
+        return await self.service_resolver.get(self.service_name, self._resolve_timeout)
+
+    async def _ping(self, availability_hint: bool | None = None):
+        logger.debug("Pinging %s (%s - %s:%s)", LazyStr(self.get_class_name), self.service_name, str(self.host), str(self.port))
+        if self.host and self.port:
+            await self._connect(self.host, self.port)
+        else:
             host, port = self.service_cache.get(self.service_name)
             if host and port:
                 try:
-                    reader_writer = await _asyncio_open_connection(host, port, connect_timeout)
+                    await self._connect(host, port)
                     self.host = host
                     self.port = port
-                    return reader_writer
-                except (TimeoutError, socket.gaierror, ConnectionRefusedError):
+                    return
+                except (TimeoutError, socket.gaierror, ConnectionRefusedError) + self._special_exceptions as e:
                     if availability_hint is None or availability_hint:
-                        pass
+                        logger.debug("  %s", LazyStr(repr, e))
                     else:
                         raise
-            host, port = await _service_resolver_get(self.service_name, resolve_timeout)
-            reader_writer = await _asyncio_open_connection(host, port, connect_timeout)
+            host, port = await self._resolve()
+            await self._connect(host, port)
+            # if resolution is happened through the ServiceListener, cache is already set, but resolution can happen through request/response also
             self.service_cache.set(self.service_name, host, port)
             self.host = host
             self.port = port
-            return reader_writer
-        logger.debug("Pinging %s (%s - %s:%s)", LazyStr(self.get_class_name), self.service_name, str(self.host), str(self.port))
-        try:
-            _reader, writer = await _connect(2, 6)
-            writer.close()
-            await writer.wait_closed()
-            return True
-        except (TimeoutError, socket.gaierror, ConnectionRefusedError):
-            return False
-        except Exception as e:
-            logger.debug("  Unexpected ping exception: %s", LazyStr(e))
-            raise
+
+class ZeroconfSshService(ZeroconfService, SshService):
+    def __init__(self, service_name: str, service_cache: ServiceCache, service_resolver: ServiceResolver, manager: Manager):
+        super().__init__(service_name=service_name, service_cache=service_cache, service_resolver=service_resolver, host_name=service_name, manager=manager)
 
 ########
 
