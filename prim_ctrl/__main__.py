@@ -284,7 +284,7 @@ class Service(Manageable):
 
         self._connect_timeout = 2
         self._special_exceptions = ()
-        self._special_exceptions_handler : Callable[[Exception], None] | None = None
+        self._special_exceptions_handler : Callable[[Exception], bool] | None = None
 
     async def _connect(self, host: str, port: int):
         logger.debug(" Connecting with TCP to %s:%d (timeout is %ds)", host, port, self._connect_timeout)
@@ -306,10 +306,13 @@ class Service(Manageable):
         except self._special_exceptions as e:
             if availability_hint is None or availability_hint:
                 if self._special_exceptions_handler:
-                    self._special_exceptions_handler(e)
+                    if self._special_exceptions_handler(e):
+                        raise
+                    else:
+                        return False
                 else:
                     logger.debug("  Unexpected ping exception: %s", LazyStr(e))
-                raise
+                    raise
             else:
                 return False
         except Exception as e:
@@ -323,12 +326,15 @@ class SshService(Service):
         self.keyfile = keyfile
 
         self._connect_timeout = 3
-        self._special_exceptions = (asyncssh.misc.HostKeyNotVerifiable, asyncssh.misc.PermissionDenied)
+        self._special_exceptions = (asyncssh.misc.HostKeyNotVerifiable, asyncssh.misc.PermissionDenied, asyncssh.misc.DisconnectError)
         def _handle_special_exceptions(e: Exception):
             if isinstance(e, asyncssh.misc.HostKeyNotVerifiable):
                 e.add_note("Check your known_hosts file, see the documentation of prim-sync for more details")
-            else:
+            elif isinstance(e, asyncssh.misc.PermissionDenied):
                 e.add_note("Check your private SSH key file, see the documentation of prim-sync for more details")
+            else:
+                return False
+            return True
         self._special_exceptions_handler = _handle_special_exceptions
 
     async def _connect(self, host: str, port: int):
@@ -970,8 +976,13 @@ class Control:
 
     async def execute(self, args, local: Local, phone: Phone):
         async def _stop(restore_state: dict | None, stop_only_started: bool = False):
-            if local.vpn and phone.vpn and phone.remote_sftp and await local.vpn.test() and await phone.vpn.test():
-                if (restore_state is None or not restore_state.get(Control.PHONE_SFTP, stop_only_started)) and await phone.remote_sftp.test():
+            async def _suppress(coro, default: bool):
+                try:
+                    return await coro
+                except:
+                    return default
+            if local.vpn and phone.vpn and phone.remote_sftp and await _suppress(local.vpn.test(), True) and await _suppress(phone.vpn.test(), True):
+                if (restore_state is None or not restore_state.get(Control.PHONE_SFTP, stop_only_started)) and await _suppress(phone.remote_sftp.test(), True):
                     try:
                         await phone.remote_sftp.stop(10, 30)
                     except Exception as e:
@@ -1075,7 +1086,10 @@ class Control:
                         state[Control.CONNECTED] = Control.ZEROCONF if zeroconf_accessible else Control.REMOTE
                         print(StateSerializer.dumps(state))
                     except Exception:
-                        await _stop(state, stop_only_started = True)
+                        try:
+                            await _stop(state, stop_only_started = True)
+                        except Exception as e:
+                            logger.exception_or_error(e, args)
                         raise
                 else:
                     try:

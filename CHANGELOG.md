@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.7.1
+
+- Fix disconnect error during stopping pftpd
+- Fix error handling during error handling
+
 ## 0.7.0
 
 - Specify private SSH key for authentication (new keyfile option)

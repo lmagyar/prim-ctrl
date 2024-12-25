@@ -82,7 +82,8 @@ Optionally, if you want to edit or even contribute to the source, you also need 
 - Click on the flow, edit the 2. block ("Set variable google_account to...), enter your Google account and press Save
 - Start the flow
 - Settings
-  - Run on system startup: enable
+  - Safety
+    - Run on system startup: enable
 
 ### Primitive FTPd
 
