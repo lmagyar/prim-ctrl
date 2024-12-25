@@ -2,6 +2,7 @@
 
 ## vNext
 
+- Simplify source account check in flow
 - Use Git LFS for *.png
 
 ## 0.7.2
