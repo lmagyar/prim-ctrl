@@ -1,6 +1,6 @@
 # Changelog
 
-## vNext
+## 0.7.3
 
 - Simplify source account check in flow
 - Use Git LFS for *.png
