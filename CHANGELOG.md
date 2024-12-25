@@ -1,5 +1,9 @@
 # Changelog
 
+## vNext
+
+- Use Git LFS for *.png
+
 ## 0.7.2
 
 - Extend flow with different managing accounts than the phone's account
