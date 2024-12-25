@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.7.3
+
+- Simplify source account check in flow
+- Use Git LFS for *.png
+
 ## 0.7.2
 
 - Extend flow with different managing accounts than the phone's account
