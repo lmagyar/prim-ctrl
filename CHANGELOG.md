@@ -1,5 +1,9 @@
 # Changelog
 
+## vNext
+
+- Extend flow with different managing accounts than the phone's account
+
 ## 0.7.1
 
 - Fix disconnect error during stopping pftpd

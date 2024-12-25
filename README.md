@@ -82,7 +82,8 @@ Optionally, if you want to edit or even contribute to the source, you also need 
 - Download the https://raw.githubusercontent.com/lmagyar/prim-ctrl/main/res/prim-ctrl.flo Automate flow to your phone (see [image](https://raw.githubusercontent.com/lmagyar/prim-ctrl/main/res/prim-ctrl.png) of the flow)
 - Import it with the ... menu / Import command
 - Enable all privileges
-- Click on the flow, edit the 2. block ("Set variable google_account to...), enter your Google account and press Save
+- Click on the flow, edit the 2nd block (Set variable google_account to...), enter your Google account's email and press Save
+  - Optionally, if the Google account your phone is registered to is different from the Google account you use to send messages to Automate (eg. you manage a phone that is a jukebox or a family member's phone and you use your personal account to send messages), edit the 3rd block (Set variable other_managing_accounts to...), enter one or more Google account's email (separated with space or comma) and press Save
 - Start the flow
 - Settings
   - Safety
@@ -152,10 +153,12 @@ Note: optionally if your laptop is accessible through Tailscale Funnel then VPN 
 Output: even when -b option is not used, the script will output 'connected=(local|remote)', what you can use to determine whether to use -a option for the prim-sync script
 
 positional arguments:
-  automate-account                 your Google account email you set up in the Automate flow's first Set variable block's Value field
+  automate-account                 your Google account email you set up in the Automate flow's 2nd block's (Set variable google_account to...) Value field
   automate-device                  the device name you can see at the Automate flow's Cloud receive block's This device field
   automate-tokenfile               filename containing Automates's Secret that located under your .secrets folder
-                                   (generated on https://llamalab.com/automate/cloud, use the same Google account you set up on the Cloud receive block)
+                                   (generated on https://llamalab.com/automate/cloud, use the same Google account you set the automate_account option to)
+                                   Note: if the account you use to send messages is different from the automate_account option,
+                                   set it up in the Automate flow's 3rd block's (Set variable other_managing_accounts to...) Value field
   server-name                      the Servername configuration option from Primitive FTPd app
   keyfile                          private SSH key filename located under your .ssh folder, see the documentation of prim-sync for more details
 
