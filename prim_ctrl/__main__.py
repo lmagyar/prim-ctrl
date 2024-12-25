@@ -1112,10 +1112,12 @@ class AutomateControl(Control):
                 "Output: even when -b option is not used, the script will output 'connected=(local|remote)', what you can use to determine whether to use -a option for the prim-sync script",
             formatter_class=WideHelpFormatter)
 
-        parser.add_argument('automate_account', metavar='automate-account', help="your Google account email you set up in the Automate flow's first Set variable block's Value field")
+        parser.add_argument('automate_account', metavar='automate-account', help="your Google account email you set up in the Automate flow's 2nd block's (Set variable google_account to...) Value field")
         parser.add_argument('automate_device', metavar='automate-device', help="the device name you can see at the Automate flow's Cloud receive block's This device field")
         parser.add_argument('automate_tokenfile', metavar='automate-tokenfile', help="filename containing Automates's Secret that located under your .secrets folder\n"
-            "(generated on https://llamalab.com/automate/cloud, use the same Google account you set up on the Cloud receive block)")
+            "(generated on https://llamalab.com/automate/cloud, use the same Google account you set the automate_account option to)\n"
+            "Note: if the account you use to send messages is different from the automate_account option,\n"
+            "set it up in the Automate flow's 3rd block's (Set variable other_managing_accounts to...) Value field")
 
         Control.setup_parser_arguments(parser)
 
