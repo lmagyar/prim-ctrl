@@ -1,5 +1,9 @@
 # Changelog
 
+## vNext
+
+- Fix error handling during error handling
+
 ## 0.7.0
 
 - Specify private SSH key for authentication (new keyfile option)

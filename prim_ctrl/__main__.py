@@ -970,8 +970,13 @@ class Control:
 
     async def execute(self, args, local: Local, phone: Phone):
         async def _stop(restore_state: dict | None, stop_only_started: bool = False):
-            if local.vpn and phone.vpn and phone.remote_sftp and await local.vpn.test() and await phone.vpn.test():
-                if (restore_state is None or not restore_state.get(Control.PHONE_SFTP, stop_only_started)) and await phone.remote_sftp.test():
+            async def _suppress(coro, default: bool):
+                try:
+                    return await coro
+                except:
+                    return default
+            if local.vpn and phone.vpn and phone.remote_sftp and await _suppress(local.vpn.test(), True) and await _suppress(phone.vpn.test(), True):
+                if (restore_state is None or not restore_state.get(Control.PHONE_SFTP, stop_only_started)) and await _suppress(phone.remote_sftp.test(), True):
                     try:
                         await phone.remote_sftp.stop(10, 30)
                     except Exception as e:
@@ -1075,7 +1080,10 @@ class Control:
                         state[Control.CONNECTED] = Control.ZEROCONF if zeroconf_accessible else Control.REMOTE
                         print(StateSerializer.dumps(state))
                     except Exception:
+                        try:
                         await _stop(state, stop_only_started = True)
+                        except Exception as e:
+                            logger.exception_or_error(e, args)
                         raise
                 else:
                     try:
