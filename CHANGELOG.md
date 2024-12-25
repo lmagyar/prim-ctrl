@@ -1,6 +1,6 @@
 # Changelog
 
-## vNext
+## 0.7.1
 
 - Fix disconnect error during stopping pftpd
 - Fix error handling during error handling
