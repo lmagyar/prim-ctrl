@@ -284,7 +284,7 @@ class Service(Manageable):
 
         self._connect_timeout = 2
         self._special_exceptions = ()
-        self._special_exceptions_handler : Callable[[Exception], None] | None = None
+        self._special_exceptions_handler : Callable[[Exception], bool] | None = None
 
     async def _connect(self, host: str, port: int):
         logger.debug(" Connecting with TCP to %s:%d (timeout is %ds)", host, port, self._connect_timeout)
@@ -306,10 +306,13 @@ class Service(Manageable):
         except self._special_exceptions as e:
             if availability_hint is None or availability_hint:
                 if self._special_exceptions_handler:
-                    self._special_exceptions_handler(e)
+                    if self._special_exceptions_handler(e):
+                        raise
+                    else:
+                        return False
                 else:
                     logger.debug("  Unexpected ping exception: %s", LazyStr(e))
-                raise
+                    raise
             else:
                 return False
         except Exception as e:
@@ -323,12 +326,15 @@ class SshService(Service):
         self.keyfile = keyfile
 
         self._connect_timeout = 3
-        self._special_exceptions = (asyncssh.misc.HostKeyNotVerifiable, asyncssh.misc.PermissionDenied)
+        self._special_exceptions = (asyncssh.misc.HostKeyNotVerifiable, asyncssh.misc.PermissionDenied, asyncssh.misc.DisconnectError)
         def _handle_special_exceptions(e: Exception):
             if isinstance(e, asyncssh.misc.HostKeyNotVerifiable):
                 e.add_note("Check your known_hosts file, see the documentation of prim-sync for more details")
-            else:
+            elif isinstance(e, asyncssh.misc.PermissionDenied):
                 e.add_note("Check your private SSH key file, see the documentation of prim-sync for more details")
+            else:
+                return False
+            return True
         self._special_exceptions_handler = _handle_special_exceptions
 
     async def _connect(self, host: str, port: int):
@@ -1081,7 +1087,7 @@ class Control:
                         print(StateSerializer.dumps(state))
                     except Exception:
                         try:
-                        await _stop(state, stop_only_started = True)
+                            await _stop(state, stop_only_started = True)
                         except Exception as e:
                             logger.exception_or_error(e, args)
                         raise

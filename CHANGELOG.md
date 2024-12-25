@@ -2,6 +2,7 @@
 
 ## vNext
 
+- Fix disconnect error during stopping pftpd
 - Fix error handling during error handling
 
 ## 0.7.0
