@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.7.4
+
+- Refactor exception logging arguments
+
 ## 0.7.3
 
 - Simplify source account check in flow

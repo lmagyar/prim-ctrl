@@ -69,8 +69,8 @@ class Logger(logging.Logger):
         if self.level == logging.NOTSET:
             self.setLevel(logging.WARNING if silent else logging.INFO)
 
-    def exception_or_error(self, e: Exception, args):
-        if not args or args.debug:
+    def exception_or_error(self, e: Exception):
+        if self.level == logging.NOTSET or self.level == logging.DEBUG:
             logger.exception(e)
         else:
             if hasattr(e, '__notes__'):
@@ -986,24 +986,24 @@ class Control:
                     try:
                         await phone.remote_sftp.stop(10, 30)
                     except Exception as e:
-                        logger.exception_or_error(e, args)
+                        logger.exception_or_error(e)
                 if restore_state is None or not restore_state.get(Control.PHONE_VPN, stop_only_started):
                     try:
                         await phone.vpn.stop(10, 60)
                     except Exception as e:
-                        logger.exception_or_error(e, args)
+                        logger.exception_or_error(e)
             else:
                 if (restore_state is None or not restore_state.get(Control.PHONE_SFTP, stop_only_started)):
                     try:
                         await phone.zeroconf_sftp.stop(10, 30)
                     except Exception as e:
-                        logger.exception_or_error(e, args)
+                        logger.exception_or_error(e)
             if local.vpn:
                 if restore_state is None or not restore_state.get(Control.LOCAL_VPN, stop_only_started):
                     try:
                         await local.vpn.stop(10, 30)
                     except Exception as e:
-                        logger.exception_or_error(e, args)
+                        logger.exception_or_error(e)
         match args.intent:
             case 'test':
                 if local.vpn and phone.vpn and phone.remote_sftp and phone.state:
@@ -1089,7 +1089,7 @@ class Control:
                         try:
                             await _stop(state, stop_only_started = True)
                         except Exception as e:
-                            logger.exception_or_error(e, args)
+                            logger.exception_or_error(e)
                         raise
                 else:
                     try:
@@ -1213,7 +1213,7 @@ async def main():
         await args.ctor().run(args)
 
     except Exception as e:
-        logger.exception_or_error(e, args)
+        logger.exception_or_error(e)
 
     return logger.exitcode
 
