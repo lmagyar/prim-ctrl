@@ -143,7 +143,11 @@ class Subprocess:
         command = ['tailscale']
         command.extend(args)
         creationflags = subprocess.CREATE_NO_WINDOW if platform.system().lower() == 'windows' else 0
-        proc = await asyncio.create_subprocess_exec(*command, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, creationflags=creationflags)
+        try:
+            proc = await asyncio.create_subprocess_exec(*command, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, creationflags=creationflags)
+        except FileNotFoundError as e:
+            e.add_note(f"Please check that Tailscale is installed properly")
+            raise
         stdout, _stderr = await proc.communicate()
         return proc.returncode == 0, stdout
 
