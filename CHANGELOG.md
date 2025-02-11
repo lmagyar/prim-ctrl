@@ -1,6 +1,6 @@
 # Changelog
 
-## vNext
+## 0.7.5
 
 - Add note to exception if Tailscale is not installed properly
 
