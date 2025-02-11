@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.7.5
+
+- Add note to exception if Tailscale is not installed properly
+
 ## 0.7.4
 
 - Refactor exception logging arguments
