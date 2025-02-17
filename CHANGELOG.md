@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.7.6
+
+- Increase test timeout for local tailscale accessibility
+
 ## 0.7.5
 
 - Add note to exception if Tailscale is not installed properly
