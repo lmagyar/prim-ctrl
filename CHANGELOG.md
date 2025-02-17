@@ -1,6 +1,6 @@
 # Changelog
 
-## vNext
+## 0.7.6
 
 - Increase test timeout for local tailscale accessibility
 
