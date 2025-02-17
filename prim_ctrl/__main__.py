@@ -871,7 +871,7 @@ class AutomatePhoneState(PhoneState):
 
         # test funnel + webhooks availability, to not wait for a reply if funnel isn't configured properly
         # though it will be routed locally, it will not go out to Tailscale's TCP forwarder servers, so the route is different from what Automate will see
-        test_timeout = 10.0
+        test_timeout = 30.0
         logger.debug("Testing Funnel with calling local webhook (timeout is %ds)", int(test_timeout))
         try:
             await self.local_webhook_ping.wait_for(True, test_timeout)
