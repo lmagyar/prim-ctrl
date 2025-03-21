@@ -23,8 +23,7 @@ import dns.rdatatype
 from aiohttp import ClientTimeout, web
 from aiohttp.abc import AbstractResolver as DnsResolver, ResolveResult
 from platformdirs import user_cache_dir
-from tailscale import Device as TailscaleDeviceInfo
-from tailscale import Tailscale as TailscaleApi
+from tailscale import Device as TailscaleDeviceInfo, Tailscale as TailscaleApi
 from zeroconf import Zeroconf, ServiceInfo, ServiceListener as ZeroconfServiceListener
 from zeroconf.asyncio import AsyncZeroconf
 
