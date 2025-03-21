@@ -887,7 +887,7 @@ class AutomatePhoneState(PhoneState):
 
         # test external funnel + webhooks availability, ie. test funnel tcp forwarders
         # it will NOT be routed locally, so the route is equivalent with / similar to what Automate will see
-        test_timeout = 30.0
+        test_timeout = 60.0
         logger.debug("Testing Funnel with calling external webhook (timeout is %ds)", int(test_timeout))
         try:
             await self.external_webhook_ping.wait_for(True, test_timeout)
