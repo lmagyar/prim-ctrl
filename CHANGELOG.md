@@ -1,6 +1,6 @@
 # Changelog
 
-## vNext
+## 0.7.7
 
 - Increase test timeout for external (funnel) tailscale accessibility
 
