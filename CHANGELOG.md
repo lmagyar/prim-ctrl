@@ -1,6 +1,6 @@
 # Changelog
 
-## vNext
+## 0.7.8
 
 - Increase wait time after fresh new local Tailscale startup
 
