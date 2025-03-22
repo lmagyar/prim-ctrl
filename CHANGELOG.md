@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.7.8
+
+- Increase wait time after fresh new local Tailscale startup
+
 ## 0.7.7
 
 - Increase test timeout for external (funnel) tailscale accessibility
