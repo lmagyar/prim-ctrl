@@ -652,8 +652,9 @@ class Tailscale():
         assert self.tailscale_api is not None
         logger.debug("Calling Tailscale API for devices")
         devices = await self.tailscale_api.devices()
+        name = f"{machine_name}.{self.tailnet}"
         for device in devices.values():
-            if device.hostname == machine_name:
+            if device.name == name:
                 return device
         raise RuntimeError(f"Device {machine_name} in {self.tailnet} is unknown by Tailscale")
 

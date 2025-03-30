@@ -1,5 +1,9 @@
 # Changelog
 
+## vNext
+
+- Fix finding device on Tailscale API
+
 ## 0.7.9
 
 - Increase timeout for Tailscale API
