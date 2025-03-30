@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.7.9
+
+- Increase timeout for Tailscale API
+
 ## 0.7.8
 
 - Increase wait time after fresh new local Tailscale startup

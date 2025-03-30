@@ -644,7 +644,7 @@ class Tailscale():
             if expires_in < 3600:
                 raise RuntimeError(f'Tailscale access token received shorter that 1 hour, {expires_in} seconds expiration')
             self.secrets.set(tokenfile, token)
-        self.tailscale_api = TailscaleApi(session=self.session, tailnet=self.tailnet, api_key=token)
+        self.tailscale_api = TailscaleApi(session=self.session, request_timeout=30, tailnet=self.tailnet, api_key=token)
 
     async def device(self, machine_name: str) -> TailscaleDeviceInfo:
         if not self.tailscale_api:
