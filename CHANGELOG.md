@@ -1,6 +1,6 @@
 # Changelog
 
-## vNext
+## 0.7.9
 
 - Increase timeout for Tailscale API
 
