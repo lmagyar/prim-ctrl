@@ -1,6 +1,6 @@
 # Changelog
 
-## vNext
+## 0.7.10
 
 - Fix finding device on Tailscale API
 
