@@ -1,5 +1,9 @@
 # Changelog
 
+## vNext
+
+- Increase test timeout for external (funnel) tailscale accessibility
+
 ## 0.7.10
 
 - Fix finding device on Tailscale API
