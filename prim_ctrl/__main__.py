@@ -845,6 +845,10 @@ class WebhookPing(Pingable):
         self.ping_url = f'{self.funnel.external_url}{Webhooks.get_ping_path()}'
         self.__qualname__ = "Webhooks"
 
+    async def wait_for(self, available: bool, timeout: float):
+        self._sleepcounter = 0
+        await super().wait_for(available, timeout)
+
     async def ping(self, availability_hint: bool | None = None):
         logger.debug("Calling url %s", self.ping_url)
         try:
@@ -854,7 +858,10 @@ class WebhookPing(Pingable):
             return False
 
     async def _sleep_while_wait(self, available: bool):
+        if 0 != self._sleepcounter and 0 == self._sleepcounter % 60:
+            logger.info("Waiting for %s (%s) to be accessible...", LazyStr(self.get_class_name), self.ping_url)
         await asyncio.sleep(1)
+        self._sleepcounter += 1
 
 class AutomatePhoneState(PhoneState):
     VARIABLE_STATE = 'state'
@@ -888,7 +895,7 @@ class AutomatePhoneState(PhoneState):
 
         # test external funnel + webhooks availability, ie. test funnel tcp forwarders
         # it will NOT be routed locally, so the route is equivalent with / similar to what Automate will see
-        test_timeout = 90.0
+        test_timeout = 300.0
         logger.debug("Testing Funnel with calling external webhook (timeout is %ds)", int(test_timeout))
         try:
             await self.external_webhook_ping.wait_for(True, test_timeout)
