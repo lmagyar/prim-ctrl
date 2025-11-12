@@ -1,9 +1,14 @@
 [tool.poetry]
+packages = [{include = "prim_ctrl"}]
+
+[project]
 name = "prim-ctrl"
-version = "0.7.12"
+version = "0.7.13"
 description = "Primitive Ctrl - Remote control of your phone's Primitive FTPd Android SFTP server and optionally Tailscale VPN."
 license = "Apache-2.0"
-authors = ["Laszlo Magyar <lmagyar1973@gmail.com>"]
+authors = [
+    {name = "Laszlo Magyar", email = "lmagyar1973@gmail.com"}
+]
 readme = "README.md"
 repository = "https://github.com/lmagyar/prim-ctrl"
 classifiers = [
@@ -11,21 +16,20 @@ classifiers = [
     "Environment :: Console",
     "Operating System :: OS Independent",
 ]
-packages = [{include = "prim_ctrl"}]
+requires-python = ">=3.12, <4.0"
+dependencies = [
+    "aiohttp (>=3.13.2)",
+    "platformdirs (>=4.5.0)",
+    "zeroconf (>=0.148.0)",
+    "dnspython (>=2.8.0)",
+    "asyncssh (>=2.21.1)",
+    "tailscale-fixed (>=0.7.0,<0.8.0)",
+]
 
-[tool.poetry.urls]
+[project.urls]
 "Change Log" = "https://github.com/lmagyar/prim-ctrl/blob/main/CHANGELOG.md"
 
-[tool.poetry.dependencies]
-python = "^3.12"
-aiohttp = "^3.11.10"
-platformdirs = "^4.3.6"
-zeroconf = "^0.136.2"
-dnspython = "^2.7.0"
-tailscale = "^0.6.1"
-asyncssh = "^2.19.0"
-
-[tool.poetry.scripts]
+[project.scripts]
 prim-ctrl = "prim_ctrl.__main__:run"
 
 [build-system]

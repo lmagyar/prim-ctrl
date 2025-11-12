@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.7.13
+
+- Replace tailscale with tailscale-fixed package
+- Update dependencies and project file structure
+
 ## 0.7.12
 
 - Increase test timeout and add log waiting for external (funnel) tailscale accessibility
