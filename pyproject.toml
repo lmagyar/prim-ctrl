@@ -22,8 +22,8 @@ dependencies = [
     "platformdirs (>=4.5.0)",
     "zeroconf (>=0.148.0)",
     "dnspython (>=2.8.0)",
-    "tailscale (>=0.6.2)",
     "asyncssh (>=2.21.1)",
+    "tailscale-fixed (>=0.7.0,<0.8.0)",
 ]
 
 [project.urls]
