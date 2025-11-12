@@ -23,7 +23,7 @@ dependencies = [
     "zeroconf (>=0.148.0)",
     "dnspython (>=2.8.0)",
     "asyncssh (>=2.21.1)",
-    "tailscale-fixed (>=0.7.0,<0.8.0)",
+    "tailscale-fixed (>=0.7.1)",
 ]
 
 [project.urls]

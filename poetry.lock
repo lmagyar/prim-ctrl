@@ -1008,14 +1008,14 @@ files = [
 
 [[package]]
 name = "tailscale-fixed"
-version = "0.7.0"
+version = "0.7.1"
 description = "Asynchronous client for the Tailscale API. [[[ This is a fork, that contains the unmerged fixes from the original repo. ]]]"
 optional = false
 python-versions = "<4.0,>=3.11"
 groups = ["main"]
 files = [
-    {file = "tailscale_fixed-0.7.0-py3-none-any.whl", hash = "sha256:0c0ded605743cc60632790df4ee22aefc7c2b32148958f0d5274ec58b0b0906b"},
-    {file = "tailscale_fixed-0.7.0.tar.gz", hash = "sha256:1d2d1b4605a8728cb19d3e9dffc27d2f80f0b63554f9d9129c3bca76fa3c55f3"},
+    {file = "tailscale_fixed-0.7.1-py3-none-any.whl", hash = "sha256:2af08c506a36e7e4b446c1ef74be94f925daede8081735e40f65f8d003fcc5d2"},
+    {file = "tailscale_fixed-0.7.1.tar.gz", hash = "sha256:169e73a97ee836b73e84c5364411764a837699d7424a5c3bb5ed9c4f2826cda0"},
 ]
 
 [package.dependencies]
@@ -1269,4 +1269,4 @@ ifaddr = ">=0.1.7"
 [metadata]
 lock-version = "2.1"
 python-versions = ">=3.12, <4.0"
-content-hash = "66ca4884693170927d148f7623b2f48e6e3099c26d29efea67bf0201e936f921"
+content-hash = "b156eba0e24a2f3bdf645f6b4e1ec06dbd14d1d2c851e79f134c4e9213216694"
