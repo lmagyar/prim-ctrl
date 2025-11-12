@@ -667,7 +667,6 @@ class ZeroconfPftpd(ZeroconfSshService):
 class RemoteTailscale(Device):
     def __init__(self, tailnet: str, machine_name: str, manager: Manager):
         super().__init__(f'{machine_name}.{tailnet}', manager)
-        self.tailnet = tailnet
         self.__qualname__ = "Remote Tailscale"
 
     async def ping(self, availability_hint: bool | None = None):
@@ -1224,18 +1223,18 @@ class AutomateControl(Control):
                 "Note: --funnel, --backup-state and --restore-state options can be used only when --tailscale is used\n"
                 "Note: --backup-state is accurate only, when --funnel is used\n"
                 "Note: --accept-cellular option can be used only when --funnel is used")
-        vpn_group.add_argument('--tailscale', nargs=3, metavar=('tailnet', 'remote-machine-name', 'sftp-port'), help=
+        vpn_group.add_argument('--tailscale', nargs=4, metavar=('tailnet', 'secretfile', 'remote-machine-name', 'sftp-port'), help=
             "tailnet:             your Tailscale tailnet name (eg. tailxxxx.ts.net)\n"
+            "secretfile:          filename containing Tailscale's Client secret (not API access token, not Auth key) that located under your .secrets folder\n"
+            "                     (generated on https://login.tailscale.com/admin/settings/oauth, with 'devices:core:read' scope,\n"
+            "                     save only the Client secret in the file, the Client ID is part of it)\n"
             "remote-machine-name: your phone's name within your tailnet (just the name, without the tailnet)\n"
             "sftp-port:           Primitive FTPd's sftp port")
-        vpn_group.add_argument('--funnel', nargs=5, metavar=('local-machine-name', 'local-port', 'local-path', 'external-port', 'secretfile'), help=
+        vpn_group.add_argument('--funnel', nargs=4, metavar=('local-machine-name', 'local-port', 'local-path', 'external-port'), help=
             "local-machine-name:  your laptop's name within your tailnet (just the name, without the tailnet)\n"
             "local-port:          12345 - if you used the example tailscale funnel command above (the local webhook will be started on this port)\n"
             "local-path:          /prim-ctrl - if you used the example tailscale funnel command above\n"
-            "external-port:       8443 - if you used the example tailscale funnel command above\n"
-            "secretfile:          filename containing Tailscale's Client secret (not API access token, not Auth key) that located under your .secrets folder\n"
-            "                     (generated on https://login.tailscale.com/admin/settings/oauth, with 'devices:core:read' scope,\n"
-            "                     save only the Client secret in the file, the Client ID is part of it)")
+            "external-port:       8443 - if you used the example tailscale funnel command above")
         Control.setup_parser_vpngroup(vpn_group)
 
         parser.set_defaults(runner=AutomateControl.runner)
@@ -1276,14 +1275,15 @@ class AutomateControl(Control):
 
             secrets = Secrets()
             automate = Automate(secrets, force_close_session, args.automate_account, args.automate_device, args.automate_tokenfile)
-            remote_tailscale = RemoteTailscale(args.tailscale[0], args.tailscale[1], AutomateTailscaleManager(automate)) if args.tailscale else None
+            tailscale = Tailscale(secrets, general_session, args.tailscale[0], args.tailscale[1]) if args.tailscale else None
+            remote_tailscale = RemoteTailscale(tailscale.tailnet, args.tailscale[2], AutomateTailscaleManager(automate)) if tailscale else None
             pftpd_manager = AutomatePftpdManager(automate)
             zeroconf_pftpd = ZeroconfPftpd(args.server_name, service_cache, service_resolver, args.keyfile, pftpd_manager)
-            remote_pftpd = RemotePftpd(remote_tailscale.host, int(args.tailscale[2]), args.server_name, args.keyfile, pftpd_manager) if remote_tailscale else None
-            funnel = Funnel(remote_tailscale.tailnet, args.funnel[0], int(args.funnel[1]), args.funnel[2], int(args.funnel[3]), external_dns_resolver) if remote_tailscale and args.funnel else None
+            remote_pftpd = RemotePftpd(remote_tailscale.host, int(args.tailscale[3]), args.server_name, args.keyfile, pftpd_manager) if remote_tailscale else None
+            funnel = Funnel(tailscale.tailnet, args.funnel[0], int(args.funnel[1]), args.funnel[2], int(args.funnel[3]), external_dns_resolver) if tailscale and args.funnel else None
             local_tailscale = (
-                LocalTailscale(Tailscale(secrets, general_session, remote_tailscale.tailnet, args.funnel[4]), funnel.machine_name) if remote_tailscale and funnel else
-                LocalTailscale() if args.tailscale else
+                LocalTailscale(tailscale, funnel.machine_name) if tailscale and funnel else
+                LocalTailscale() if tailscale else
                 None)
 
             async with Webhooks(Funnel.LOCAL_HOST, funnel.local_port) if funnel else nullcontext() as webhooks:

@@ -2,6 +2,7 @@
 
 ## 0.7.14
 
+- Breaking: move secretfile argument from funnel to tailscale option
 - Protect against Ctrl-C/KeyboardInterrupt in critical steps
 - Ctrl-C/KeyboardInterrupt results in exit code 130
 - Use tailscale ping instead of normal ping

@@ -141,7 +141,7 @@ prim-ctrl Automate youraccount@gmail.com "SOME MANUFACTURER XXXX" automate your-
 ### Options
 
 ```
-usage: prim-ctrl Automate [-h] [-i {test,start,stop}] [-t] [-s] [--debug] [--tailscale tailnet remote-machine-name sftp-port] [--funnel local-machine-name local-port local-path external-port secretfile] [-ac] [-b] [-r STATE]
+usage: prim-ctrl Automate [-h] [-i {test,start,stop}] [-t] [-s] [--debug] [--tailscale tailnet secretfile remote-machine-name sftp-port] [--funnel local-machine-name local-port local-path external-port] [-ac] [-b] [-r STATE]
                           automate-account automate-device automate-tokenfile server-name keyfile
 
 Remote control of your phone's Primitive FTPd and optionally Tailscale app statuses via the Automate app, for more details see https://github.com/lmagyar/prim-ctrl
@@ -179,18 +179,18 @@ VPN:
   Note: --backup-state is accurate only, when --funnel is used
   Note: --accept-cellular option can be used only when --funnel is used
 
-  --tailscale tailnet remote-machine-name sftp-port
+  --tailscale tailnet secretfile remote-machine-name sftp-port
                                   tailnet:             your Tailscale tailnet name (eg. tailxxxx.ts.net)
+                                  secretfile:          filename containing Tailscale's Client secret (not API access token, not Auth key) that located under your .secrets folder
+                                                       (generated on https://login.tailscale.com/admin/settings/oauth, with 'devices:core:read' scope,
+                                                       save only the Client secret in the file, the Client ID is part of it)
                                   remote-machine-name: your phone's name within your tailnet (just the name, without the tailnet)
                                   sftp-port:           Primitive FTPd's sftp port
-  --funnel local-machine-name local-port local-path external-port secretfile
+  --funnel local-machine-name local-port local-path external-port
                                   local-machine-name:  your laptop's name within your tailnet (just the name, without the tailnet)
                                   local-port:          12345 - if you used the example tailscale funnel command above (the local webhook will be started on this port)
                                   local-path:          /prim-ctrl - if you used the example tailscale funnel command above
                                   external-port:       8443 - if you used the example tailscale funnel command above
-                                  secretfile:          filename containing Tailscale's Client secret (not API access token, not Auth key) that located under your .secrets folder
-                                                       (generated on https://login.tailscale.com/admin/settings/oauth, with 'devices:core:read' scope,
-                                                       save only the Client secret in the file, the Client ID is part of it)
   -ac, --accept-cellular          in case of start, if WiFi is not connected, don't return error, but start VPN up
   -b, --backup-state              in case of start, backup current state to stdout as single string (in case of an error, it will try to restore the original state but will not write it to stdout)
   -r, --restore-state STATE       in case of stop, restore previous state from STATE (use -b to get a valid STATE string)
