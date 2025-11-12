@@ -1,6 +1,6 @@
 # Changelog
 
-## vNext
+## 0.7.13
 
 - Replace tailscale with tailscale-fixed package
 - Update dependencies and project file structure
