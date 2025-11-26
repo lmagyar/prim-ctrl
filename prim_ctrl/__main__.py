@@ -601,6 +601,12 @@ class RemoteTailscale(Device):
         self.tailnet = tailnet
         self.__qualname__ = "Remote Tailscale"
 
+    async def ping(self, availability_hint: bool | None = None):
+        logger.debug("Pinging %s (%s)", LazyStr(self.get_class_name), self.host)
+        # network ping not always works when the device is online, use tailscale ping instead
+        success, _ = await Subprocess.tailscale(['ping', '--c', '1', '--timeout', '2s', self.host])
+        return success
+
 ########
 
 class Local:

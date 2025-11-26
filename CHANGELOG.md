@@ -2,6 +2,7 @@
 
 ## vNext
 
+- Use tailscale ping instead of normal ping
 - Update dependencies
 
 ## 0.7.13
