@@ -1,6 +1,7 @@
 
 import argparse
 import asyncio
+import signal
 import json
 import logging
 import os
@@ -82,11 +83,13 @@ class Logger(logging.Logger):
         super().error(msg, *args, **kwargs)
 
     def critical(self, msg, *args, **kwargs):
-        self.exitcode = 1
+        self.exitcode = 128 + kwargs.pop('signal', 0)
         super().critical(msg, *args, **kwargs)
 
     def log(self, level, msg, *args, **kwargs):
-        if level >= logging.ERROR:
+        if level >= logging.CRITICAL:
+            self.exitcode = 128 + kwargs.pop('signal', 0)
+        elif level >= logging.ERROR:
             self.exitcode = 1
         super().log(level, msg, *args, **kwargs)
 
@@ -1232,8 +1235,10 @@ async def main():
     except Exception as e:
         logger.exception_or_error(e)
 
+    except KeyboardInterrupt:
+        logger.critical("Interrupted by user", signal=signal.SIGINT)
+
     return logger.exitcode
 
 def run():
-    with suppress(KeyboardInterrupt):
-        exit(asyncio.run(main()))
+    sys.exit(asyncio.run(main()))

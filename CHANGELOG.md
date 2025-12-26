@@ -2,6 +2,7 @@
 
 ## vNext
 
+- Ctrl-C/KeyboardInterrupt results in exit code 130
 - Use tailscale ping instead of normal ping
 - Update dependencies
 
