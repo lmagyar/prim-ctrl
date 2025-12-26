@@ -1,6 +1,6 @@
 # Changelog
 
-## vNext
+## 0.7.14
 
 - Ctrl-C/KeyboardInterrupt results in exit code 130
 - Use tailscale ping instead of normal ping
