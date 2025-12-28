@@ -1189,7 +1189,7 @@ class AutomateControl(Control):
                 # Automate messaging server prefers closing connections
                 connector=aiohttp.TCPConnector(force_close=True)) as force_close_session,
             aiohttp.ClientSession(
-                # Uses external DNS to access Funnet TCP forwarder servers instead of local MagicDNS route
+                # Uses external DNS to access Funnel TCP forwarder servers instead of local MagicDNS route
                 connector=aiohttp.TCPConnector(resolver=external_dns_resolver)) as external_dns_session,
             AsyncZeroconf() as zeroconf
         ):
