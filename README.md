@@ -153,24 +153,23 @@ Note: optionally if your laptop is accessible through Tailscale Funnel then VPN 
 Output: even when -b option is not used, the script will output 'connected=(local|remote)', what you can use to determine whether to use -a option for the prim-sync script
 
 positional arguments:
-  automate-account                 your Google account email you set up in the Automate flow's 2nd block's (Set variable google_account to...) Value field
-  automate-device                  the device name you can see at the Automate flow's Cloud receive block's This device field
-  automate-tokenfile               filename containing Automates's Secret that located under your .secrets folder
-                                   (generated on https://llamalab.com/automate/cloud, use the same Google account you set the automate_account option to)
-                                   Note: if the account you use to send messages is different from the automate_account option,
-                                   set it up in the Automate flow's 3rd block's (Set variable other_managing_accounts to...) Value field
-  server-name                      the Servername configuration option from Primitive FTPd app
-  keyfile                          private SSH key filename located under your .ssh folder, see the documentation of prim-sync for more details
+  automate-account                your Google account email you set up in the Automate flow's 2nd block's (Set variable google_account to...) Value field
+  automate-device                 the device name you can see at the Automate flow's Cloud receive block's This device field
+  automate-tokenfile              filename containing Automates's Secret that located under your .secrets folder
+                                  (generated on https://llamalab.com/automate/cloud, use the same Google account you set the automate_account option to)
+                                  Note: if the account you use to send messages is different from the automate_account option,
+                                  set it up in the Automate flow's 3rd block's (Set variable other_managing_accounts to...) Value field
+  server-name                     the Servername configuration option from Primitive FTPd app
+  keyfile                         private SSH key filename located under your .ssh folder, see the documentation of prim-sync for more details
 
 options:
-  -h, --help                       show this help message and exit
-  -i {test,start,stop}, --intent {test,start,stop}
-                                   what to do with the apps, default: test
+  -h, --help                      show this help message and exit
+  -i, --intent {test,start,stop}  what to do with the apps, default: test
 
 logging:
-  -t, --timestamp                  prefix each message with an UTC timestamp
-  -s, --silent                     only errors printed
-  --debug                          use debug level logging and add stack trace for exceptions, disables the --silent and enables the --timestamp options
+  -t, --timestamp                 prefix each message with an UTC timestamp
+  -s, --silent                    only errors printed
+  --debug                         use debug level logging and add stack trace for exceptions, disables the --silent and enables the --timestamp options
 
 VPN:
   To use --tailscale option you must install Tailscale and configure Tailscale VPN on your phone and your laptop
@@ -181,18 +180,18 @@ VPN:
   Note: --accept-cellular option can be used only when --funnel is used
 
   --tailscale tailnet remote-machine-name sftp-port
-                                   tailnet:             your Tailscale tailnet name (eg. tailxxxx.ts.net)
-                                   remote-machine-name: your phone's name within your tailnet (just the name, without the tailnet)
-                                   sftp-port:           Primitive FTPd's sftp port
+                                  tailnet:             your Tailscale tailnet name (eg. tailxxxx.ts.net)
+                                  remote-machine-name: your phone's name within your tailnet (just the name, without the tailnet)
+                                  sftp-port:           Primitive FTPd's sftp port
   --funnel local-machine-name local-port local-path external-port secretfile
-                                   local-machine-name:  your laptop's name within your tailnet (just the name, without the tailnet)
-                                   local-port:          12345 - if you used the example tailscale funnel command above (the local webhook will be started on this port)
-                                   local-path:          /prim-ctrl - if you used the example tailscale funnel command above
-                                   external-port:       8443 - if you used the example tailscale funnel command above
-                                   secretfile:          filename containing Tailscale's Client secret (not API access token, not Auth key) that located under your .secrets folder
-                                                        (generated on https://login.tailscale.com/admin/settings/oauth, with 'devices:core:read' scope,
-                                                        save only the Client secret in the file, the Client ID is part of it)
-  -ac, --accept-cellular           in case of start, if WiFi is not connected, don't return error, but start VPN up
-  -b, --backup-state               in case of start, backup current state to stdout as single string (in case of an error, it will try to restore the original state but will not write it to stdout)
-  -r STATE, --restore-state STATE  in case of stop, restore previous state from STATE (use -b to get a valid STATE string)
+                                  local-machine-name:  your laptop's name within your tailnet (just the name, without the tailnet)
+                                  local-port:          12345 - if you used the example tailscale funnel command above (the local webhook will be started on this port)
+                                  local-path:          /prim-ctrl - if you used the example tailscale funnel command above
+                                  external-port:       8443 - if you used the example tailscale funnel command above
+                                  secretfile:          filename containing Tailscale's Client secret (not API access token, not Auth key) that located under your .secrets folder
+                                                       (generated on https://login.tailscale.com/admin/settings/oauth, with 'devices:core:read' scope,
+                                                       save only the Client secret in the file, the Client ID is part of it)
+  -ac, --accept-cellular          in case of start, if WiFi is not connected, don't return error, but start VPN up
+  -b, --backup-state              in case of start, backup current state to stdout as single string (in case of an error, it will try to restore the original state but will not write it to stdout)
+  -r, --restore-state STATE       in case of stop, restore previous state from STATE (use -b to get a valid STATE string)
 ```

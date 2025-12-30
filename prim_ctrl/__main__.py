@@ -1001,7 +1001,7 @@ class AutomatePhoneState(PhoneState):
 ########
 
 class WideHelpFormatter(argparse.RawTextHelpFormatter):
-    def __init__(self, prog: str, indent_increment: int = 2, max_help_position: int = 35, width: int | None = None) -> None:
+    def __init__(self, prog: str, indent_increment: int = 2, max_help_position: int = 34, width: int | None = None) -> None:
         super().__init__(prog, indent_increment, max_help_position, width)
 
 async def gather_with_taskgroup(*coros):
