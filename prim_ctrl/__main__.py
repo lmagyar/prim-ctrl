@@ -212,12 +212,12 @@ class Subprocess:
         command.extend(args)
         creationflags = subprocess.CREATE_NO_WINDOW if platform.system().lower() == 'windows' else 0
         try:
-            proc = await asyncio.create_subprocess_exec(*command, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, creationflags=creationflags)
+            proc = await asyncio.create_subprocess_exec(*command, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE, creationflags=creationflags)
         except FileNotFoundError as e:
             e.add_note(f"Please check that Tailscale is installed properly")
             raise
-        stdout, _stderr = await proc.communicate()
-        return proc.returncode == 0, stdout
+        stdout, stderr = await proc.communicate()
+        return proc.returncode == 0, stdout.decode(), stderr.decode()
 
 ########
 
@@ -673,8 +673,8 @@ class RemoteTailscale(Device):
     async def ping(self, availability_hint: bool | None = None):
         logger.debug("Pinging %s (%s)", LazyStr(self.get_class_name), self.host)
         # network ping not always works when the device is online, use tailscale ping instead
-        success, _ = await Subprocess.tailscale(['ping', '--c', '1', '--timeout', '2s', self.host])
-        return success
+        success, stdout, stderr = await Subprocess.tailscale(['ping', '--c', '1', '--timeout', '2s', self.host])
+        return success or stderr.rstrip() == "direct connection not established" and stdout.startswith(f"pong from {self.host.split('.', maxsplit=1)[0]}")
 
 ########
 
@@ -751,7 +751,7 @@ class LocalTailscale(Manageable):
 
     async def ping(self, availability_hint: bool | None = None):
         logger.debug("Getting status of %s", LazyStr(self.get_class_name))
-        success, stdout = await Subprocess.tailscale(['status', '--json', '--peers=false', '--self=true'])
+        success, stdout, _ = await Subprocess.tailscale(['status', '--json', '--peers=false', '--self=true'])
         if success:
             status = json.loads(stdout)
         return success and status['BackendState'] == 'Running' and status['Self']['Online']
