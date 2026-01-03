@@ -603,14 +603,17 @@ class ZeroconfService(Service):
         return await self.service_resolver.get(self.service_name, self._resolve_timeout)
 
     async def _ping(self, availability_hint: bool | None = None):
-        logger.debug("Pinging %s (%s - %s:%s)", LazyStr(self.get_class_name), self.service_name, str(self.host), str(self.port))
+        async def __ping(host: str, port: int):
+            logger.debug("Pinging %s (%s - %s:%d)", LazyStr(self.get_class_name), self.service_name, host, port)
+            await self._connect(host, port)
+
         if self.host and self.port:
-            await self._connect(self.host, self.port)
+            await __ping(self.host, self.port)
         else:
             host, port = self.service_cache.get(self.service_name)
             if host and port:
                 try:
-                    await self._connect(host, port)
+                    await __ping(host, port)
                     self.host = host
                     self.port = port
                     return
@@ -620,7 +623,7 @@ class ZeroconfService(Service):
                     else:
                         raise
             host, port = await self._resolve()
-            await self._connect(host, port)
+            await __ping(host, port)
             # if resolution is happened through the ServiceListener, cache is already set, but resolution can happen through request/response also
             self.service_cache.set(self.service_name, host, port)
             self.host = host
