@@ -632,13 +632,6 @@ class ZeroconfSshService(ZeroconfService, SshService):
 
 ########
 
-class Phone:
-    def __init__(self, zeroconf_sftp: ZeroconfSshService, vpn: Device | None, remote_sftp: SshService | None, state: PhoneState | None):
-        self.zeroconf_sftp = zeroconf_sftp
-        self.vpn = vpn
-        self.remote_sftp = remote_sftp
-        self.state = state
-
 class PftpdServiceListener(ServiceListener):
     def __init__(self, server_name: str, cache: ServiceCache):
         self.server_name = server_name
@@ -664,22 +657,7 @@ class ZeroconfPftpd(ZeroconfSshService):
         super().__init__(service_name, service_cache, service_resolver, keyfile, manager)
         self.__qualname__ = "pFTPd"
 
-class RemoteTailscale(Device):
-    def __init__(self, tailnet: str, machine_name: str, manager: Manager):
-        super().__init__(f'{machine_name}.{tailnet}', manager)
-        self.__qualname__ = "Remote Tailscale"
-
-    async def ping(self, availability_hint: bool | None = None):
-        logger.debug("Pinging %s (%s)", LazyStr(self.get_class_name), self.host)
-        # network ping not always works when the device is online, use tailscale ping instead
-        success, stdout, stderr = await Subprocess.tailscale(['ping', '--c', '1', '--timeout', '2s', self.host])
-        return success or stderr.rstrip() == "direct connection not established" and stdout.startswith(f"pong from {self.host.split('.', maxsplit=1)[0]}")
-
 ########
-
-class Local:
-    def __init__(self, vpn: Manageable | None):
-        self.vpn = vpn
 
 class Tailscale():
     TOKEN_SUFFIX = '.token'
@@ -732,58 +710,15 @@ class Tailscale():
                 return device
         raise RuntimeError(f"Device {machine_name} in {self.tailnet} is unknown by Tailscale")
 
-class LocalTailscaleManager(Manager):
-    async def start(self):
-        if not (await Subprocess.tailscale(['up']))[0]:
-            raise RuntimeError("Failed to start up local Tailscale")
-
-    async def stop(self):
-        if not (await Subprocess.tailscale(['down']))[0]:
-            raise RuntimeError("Failed to shut down local Tailscale")
-
-class LocalTailscale(Manageable):
-    def __init__(self, tailscale: Tailscale | None = None, machine_name: str | None = None):
-        super().__init__(LocalTailscaleManager())
-        self.tailscale = tailscale
-        self.machine_name = machine_name
-        self.__qualname__ = "Local Tailscale"
-
-    async def ping(self, availability_hint: bool | None = None):
-        logger.debug("Getting status of %s", LazyStr(self.get_class_name))
-        success, stdout, _ = await Subprocess.tailscale(['status', '--json', '--peers=false', '--self=true'])
-        if success:
-            status = json.loads(stdout)
-        return success and status['BackendState'] == 'Running' and status['Self']['Online']
-
-    async def _sleep_while_wait(self, available: bool):
-        await asyncio.sleep(0.250)
-
-    async def start(self, repeat: float, timeout: float):
-        if self.tailscale and self.machine_name:
-            device_info = await self.tailscale.device(self.machine_name)
-        start_result = await super().start(repeat, timeout)
-        if start_result and self.tailscale and self.machine_name:
-            max_last_seen_age = 7200
-            wait_on_fresh_start = 15
-            difference = datetime.now(timezone.utc).replace(microsecond=0) - device_info.last_seen if device_info.last_seen else None
-            difference_sec = difference.total_seconds() if difference else None
-            if difference_sec is None or difference_sec > max_last_seen_age:
-                # wait a little to avoid caching empty DNS entry for 5 minutes, better to loose a few seconds than 300s
-                logger.debug("Waiting for %is, because %s is freshly started up and wasn't seen for more than %ih (last seen at %s, %s ago)",
-                     wait_on_fresh_start, LazyStr(self.get_class_name), max_last_seen_age/3600,
-                     LazyStr((lambda last_seen : str(last_seen.astimezone())[:19] if last_seen else None), device_info.last_seen), LazyStr(difference))
-                await asyncio.sleep(wait_on_fresh_start)
-        return start_result
-
 class Funnel(Pingable):
     LOCAL_HOST = '127.0.0.1'
 
-    def __init__(self, tailnet: str, machine_name: str, local_port: int, local_path: str, external_port: int, dns_resolver: DnsResolver):
+    def __init__(self, tailscale: Tailscale, machine_name: str, local_port: int, local_path: str, external_port: int, dns_resolver: DnsResolver):
         self.machine_name = machine_name
         self.local_port = local_port
-        self.external_name = f'{machine_name}.{tailnet}'
+        self.external_name = f'{machine_name}.{tailscale.tailnet}'
         self.external_port = external_port
-        self.external_url = f'https://{machine_name}.{tailnet}:{external_port}{local_path}'
+        self.external_url = f'https://{machine_name}.{tailscale.tailnet}:{external_port}{local_path}'
         self.dns_resolver = dns_resolver
 
     async def wait_for(self, available: bool, timeout: float):
@@ -803,6 +738,60 @@ class Funnel(Pingable):
             logger.info("Waiting for public DNS records to be updated for %s (%s)...", LazyStr(self.get_class_name), self.external_name)
         await asyncio.sleep(10)
         self._sleepcounter += 1
+
+class LocalTailscaleManager(Manager):
+    async def start(self):
+        if not (await Subprocess.tailscale(['up']))[0]:
+            raise RuntimeError("Failed to start up local Tailscale")
+
+    async def stop(self):
+        if not (await Subprocess.tailscale(['down']))[0]:
+            raise RuntimeError("Failed to shut down local Tailscale")
+
+class LocalTailscale(Manageable):
+    def __init__(self, tailscale: Tailscale, funnel: Funnel | None, manager: Manager):
+        super().__init__(manager)
+        self.tailscale = tailscale
+        self.funnel = funnel
+        self.__qualname__ = "Local Tailscale"
+
+    async def ping(self, availability_hint: bool | None = None):
+        logger.debug("Getting status of %s", LazyStr(self.get_class_name))
+        success, stdout, _ = await Subprocess.tailscale(['status', '--json', '--peers=false', '--self=true'])
+        if success:
+            status = json.loads(stdout)
+        return success and status['BackendState'] == 'Running' and status['Self']['Online']
+
+    async def _sleep_while_wait(self, available: bool):
+        await asyncio.sleep(0.250)
+
+    async def start(self, repeat: float, timeout: float):
+        if self.funnel:
+            device_info = await self.tailscale.device(self.funnel.machine_name)
+        start_result = await super().start(repeat, timeout)
+        if start_result and self.funnel:
+            max_last_seen_age = 7200
+            wait_on_fresh_start = 15
+            difference = datetime.now(timezone.utc).replace(microsecond=0) - device_info.last_seen if device_info.last_seen else None
+            difference_sec = difference.total_seconds() if difference else None
+            if difference_sec is None or difference_sec > max_last_seen_age:
+                # wait a little to avoid caching empty DNS entry for 5 minutes, better to loose a few seconds than 300s
+                logger.debug("Waiting for %is, because %s is freshly started up and wasn't seen for more than %ih (last seen at %s, %s ago)",
+                     wait_on_fresh_start, LazyStr(self.get_class_name), max_last_seen_age/3600,
+                     LazyStr((lambda last_seen : str(last_seen.astimezone())[:19] if last_seen else None), device_info.last_seen), LazyStr(difference))
+                await asyncio.sleep(wait_on_fresh_start)
+        return start_result
+
+class RemoteTailscale(Device):
+    def __init__(self, tailscale: Tailscale, machine_name: str, manager: Manager):
+        super().__init__(f'{machine_name}.{tailscale.tailnet}', manager)
+        self.__qualname__ = "Remote Tailscale"
+
+    async def ping(self, availability_hint: bool | None = None):
+        logger.debug("Pinging %s (%s)", LazyStr(self.get_class_name), self.host)
+        # network ping not always works when the device is online, use tailscale ping instead
+        success, stdout, stderr = await Subprocess.tailscale(['ping', '--c', '1', '--timeout', '2s', self.host])
+        return success or stderr.rstrip() == "direct connection not established" and stdout.startswith(f"pong from {self.host.split('.', maxsplit=1)[0]}")
 
 ########
 
@@ -1010,6 +999,17 @@ async def gather_with_taskgroup(*coros):
         return tuple([task.result() for task in tasks])
     except ExceptionGroup as eg:
         raise eg.exceptions[0] from (None if len(eg.exceptions) == 1 else eg)
+
+class Local:
+    def __init__(self, vpn: Manageable | None):
+        self.vpn = vpn
+
+class Phone:
+    def __init__(self, zeroconf_sftp: ZeroconfSshService, vpn: Device | None, remote_sftp: SshService | None, state: PhoneState | None):
+        self.zeroconf_sftp = zeroconf_sftp
+        self.vpn = vpn
+        self.remote_sftp = remote_sftp
+        self.state = state
 
 class Control:
     PHONE_WIFI = 'remote-wifi'
@@ -1276,15 +1276,12 @@ class AutomateControl(Control):
             secrets = Secrets()
             automate = Automate(secrets, force_close_session, args.automate_account, args.automate_device, args.automate_tokenfile)
             tailscale = Tailscale(secrets, general_session, args.tailscale[0], args.tailscale[1]) if args.tailscale else None
-            remote_tailscale = RemoteTailscale(tailscale.tailnet, args.tailscale[2], AutomateTailscaleManager(automate)) if tailscale else None
+            funnel = Funnel(tailscale, args.funnel[0], int(args.funnel[1]), args.funnel[2], int(args.funnel[3]), external_dns_resolver) if tailscale and args.funnel else None
+            local_tailscale = LocalTailscale(tailscale, funnel, LocalTailscaleManager()) if tailscale else None
+            remote_tailscale = RemoteTailscale(tailscale, args.tailscale[2], AutomateTailscaleManager(automate)) if tailscale else None
             pftpd_manager = AutomatePftpdManager(automate)
             zeroconf_pftpd = ZeroconfPftpd(args.server_name, service_cache, service_resolver, args.keyfile, pftpd_manager)
             remote_pftpd = RemotePftpd(remote_tailscale.host, int(args.tailscale[3]), args.server_name, args.keyfile, pftpd_manager) if remote_tailscale else None
-            funnel = Funnel(tailscale.tailnet, args.funnel[0], int(args.funnel[1]), args.funnel[2], int(args.funnel[3]), external_dns_resolver) if tailscale and args.funnel else None
-            local_tailscale = (
-                LocalTailscale(tailscale, funnel.machine_name) if tailscale and funnel else
-                LocalTailscale() if tailscale else
-                None)
 
             async with Webhooks(Funnel.LOCAL_HOST, funnel.local_port) if funnel else nullcontext() as webhooks:
                 local = Local(local_tailscale)
