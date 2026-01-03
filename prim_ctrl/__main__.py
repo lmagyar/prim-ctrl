@@ -10,7 +10,7 @@ import socket
 import subprocess
 import sys
 import time
-from abc import abstractmethod
+from abc import ABC, abstractmethod
 from collections.abc import Awaitable
 from contextlib import contextmanager, nullcontext, suppress
 from datetime import datetime, timezone
@@ -277,7 +277,7 @@ class ExternalDnsResolver(DnsResolver):
 
 ########
 
-class Pingable:
+class Pingable(ABC):
     @abstractmethod
     async def ping(self, availability_hint: bool | None = None) -> bool:
         pass
@@ -299,7 +299,7 @@ class Pingable:
         if not available:
             await asyncio.sleep(1)
 
-class Manager:
+class Manager(ABC):
     @abstractmethod
     async def start(self):
         pass
@@ -461,7 +461,7 @@ class StateSerializer:
             e.add_note("Missing '=' in state")
             raise
 
-class PhoneState:
+class PhoneState(ABC):
     WIFI = 'wifi'
     PFTPD = 'pftpd'
 
@@ -537,7 +537,7 @@ class ServiceResolver:
             raise TimeoutError("Unable to resolve zeroconf (DNS-SD) service information")
         return (service_info.parsed_addresses()[0], int(service_info.port))
 
-class ServiceListener:
+class ServiceListener(ABC):
     @abstractmethod
     def set_service(self, service_name: str, service_info: ServiceInfo):
         pass
