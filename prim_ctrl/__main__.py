@@ -754,6 +754,7 @@ class LocalTailscale(Manageable):
         self.tailscale = tailscale
         self.funnel = funnel
         self.__qualname__ = "Local Tailscale"
+        self._waited_on_fresh_start = False
 
     async def ping(self, availability_hint: bool | None = None):
         logger.debug("Getting status of %s", LazyStr(self.get_class_name))
@@ -766,12 +767,13 @@ class LocalTailscale(Manageable):
         await asyncio.sleep(0.250)
 
     async def start(self, repeat: float, timeout: float):
-        if self.funnel:
+        if not self._waited_on_fresh_start and self.funnel:
             device_info = await self.tailscale.device(self.funnel.machine_name)
         start_result = await super().start(repeat, timeout)
-        if start_result and self.funnel:
+        if start_result and not self._waited_on_fresh_start and self.funnel:
+            self._waited_on_fresh_start = True
             max_last_seen_age = 7200
-            wait_on_fresh_start = 15
+            wait_on_fresh_start = 10
             difference = datetime.now(timezone.utc).replace(microsecond=0) - device_info.last_seen if device_info.last_seen else None
             difference_sec = difference.total_seconds() if difference else None
             if difference_sec is None or difference_sec > max_last_seen_age:
@@ -901,11 +903,9 @@ class AutomateTailscaleManager(Manager):
         await self.automate.send_message('stop-tailscale')
 
 class WebhookPing(Pingable):
-    def __init__(self, session: aiohttp.ClientSession, webhooks: Webhooks, funnel: Funnel):
+    def __init__(self, session: aiohttp.ClientSession, funnel: Funnel):
         self.session = session
-        self.webhooks = webhooks
-        self.funnel = funnel
-        self.ping_url = f'{self.funnel.external_url}{Webhooks.get_ping_path()}'
+        self.ping_url = f'{funnel.external_url}{Webhooks.get_ping_path()}'
         self.__qualname__ = "Webhooks"
 
     async def wait_for(self, available: bool, timeout: float):
@@ -926,15 +926,27 @@ class WebhookPing(Pingable):
         await asyncio.sleep(1)
         self._sleepcounter += 1
 
+class ExternalWebhookPing(WebhookPing):
+    def __init__(self, session: aiohttp.ClientSession, funnel: Funnel, local_tailscale: LocalTailscale):
+        super().__init__(session, funnel)
+        self.local_tailscale = local_tailscale
+
+    async def _sleep_while_wait(self, available: bool):
+        if 0 != self._sleepcounter and 0 == self._sleepcounter % 15:
+            logger.info("Restarting %s to retrigger Funnel TCP forwarders' configuration at Tailscale...", LazyStr(self.local_tailscale.get_class_name))
+            await self.local_tailscale.stop(10, 30)
+            await self.local_tailscale.start(10, 30)
+        await super()._sleep_while_wait(available)
+
 class AutomatePhoneState(PhoneState):
     VARIABLE_STATE = 'state'
 
-    def __init__(self, general_session: aiohttp.ClientSession, external_dns_session: aiohttp.ClientSession, webhooks: Webhooks, automate: Automate, funnel: Funnel):
+    def __init__(self, general_session: aiohttp.ClientSession, external_dns_session: aiohttp.ClientSession, webhooks: Webhooks, automate: Automate, funnel: Funnel, local_tailscale: LocalTailscale):
         self.webhooks = webhooks
         self.automate = automate
         self.funnel = funnel
-        self.local_webhook_ping = WebhookPing(general_session, webhooks, funnel)
-        self.external_webhook_ping = WebhookPing(external_dns_session, webhooks, funnel)
+        self.local_webhook_ping = WebhookPing(general_session, funnel)
+        self.external_webhook_ping = ExternalWebhookPing(external_dns_session, funnel, local_tailscale)
 
     async def get(self, repeat: float, timeout: float):
         logger.info("Getting Phone state...")
@@ -958,7 +970,7 @@ class AutomatePhoneState(PhoneState):
 
         # test external funnel + webhooks availability, ie. test funnel tcp forwarders
         # it will NOT be routed locally, so the route is equivalent with / similar to what Automate will see
-        test_timeout = 300.0
+        test_timeout = 120.0
         logger.debug("Testing Funnel with calling external webhook (timeout is %ds)", int(test_timeout))
         try:
             await self.external_webhook_ping.wait_for(True, test_timeout)
@@ -1285,7 +1297,7 @@ class AutomateControl(Control):
 
             async with Webhooks(Funnel.LOCAL_HOST, funnel.local_port) if funnel else nullcontext() as webhooks:
                 local = Local(local_tailscale)
-                automate_phone_state = AutomatePhoneState(general_session, external_dns_session, webhooks, automate, funnel) if funnel and webhooks else None
+                automate_phone_state = AutomatePhoneState(general_session, external_dns_session, webhooks, automate, funnel, local_tailscale) if local_tailscale and funnel and webhooks else None
                 phone = Phone(zeroconf_pftpd, remote_tailscale, remote_pftpd, automate_phone_state)
                 keyboard_interrupt = SignalFence(signal.SIGINT, lambda signum, frame: logger.debug("Keyboard interrupt received, finishing ongoing operations before exit"))
                 control = AutomateControl(args, local, phone, keyboard_interrupt)

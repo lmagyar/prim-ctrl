@@ -2,6 +2,7 @@
 
 ## 0.7.14
 
+- Restart local tailscale while waiting for funnel TCP forwarders to be set up
 - Breaking: move secretfile argument from funnel to tailscale option
 - Protect against Ctrl-C/KeyboardInterrupt in critical steps
 - Ctrl-C/KeyboardInterrupt results in exit code 130
