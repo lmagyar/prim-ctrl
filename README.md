@@ -141,7 +141,7 @@ prim-ctrl Automate youraccount@gmail.com "SOME MANUFACTURER XXXX" automate your-
 ### Options
 
 ```
-usage: prim-ctrl Automate [-h] [-i {test,start,stop}] [-t] [-s] [--debug] [--tailscale tailnet secretfile remote-machine-name sftp-port] [--funnel local-machine-name local-port local-path external-port] [-ac] [-b] [-r STATE]
+usage: prim-ctrl Automate [-h] [-i {test,start,stop}] [-t] [-s] [--debug] [--tailscale tailnet secretfile remote-machine-name sftp-port] [--funnel local-machine-name local-port local-path external-port] [-rv DAYS] [-ac] [-b] [-r STATE]
                           automate-account automate-device automate-tokenfile server-name keyfile
 
 Remote control of your phone's Primitive FTPd and optionally Tailscale app statuses via the Automate app, for more details see https://github.com/lmagyar/prim-ctrl
@@ -175,7 +175,7 @@ VPN:
   To use --tailscale option you must install Tailscale and configure Tailscale VPN on your phone and your laptop
   To use --funnel option you must configure Tailscale Funnel on your laptop for prim-ctrl's local webhook to accept responses from the Automate app
      (eg.: tailscale funnel --bg --https=8443 --set-path=/prim-ctrl "http://127.0.0.1:12345")
-  Note: --funnel, --backup-state and --restore-state options can be used only when --tailscale is used
+  Note: --funnel, --restart-vpn, --backup-state and --restore-state options can be used only when --tailscale is used
   Note: --backup-state is accurate only, when --funnel is used
   Note: --accept-cellular option can be used only when --funnel is used
 
@@ -191,6 +191,7 @@ VPN:
                                   local-port:          12345 - if you used the example tailscale funnel command above (the local webhook will be started on this port)
                                   local-path:          /prim-ctrl - if you used the example tailscale funnel command above
                                   external-port:       8443 - if you used the example tailscale funnel command above
+  -rv, --restart-vpn DAYS         in case of start, even if connected locally, but VPN is not used in the past DAYS, start VPN up
   -ac, --accept-cellular          in case of start, if WiFi is not connected, don't return error, but start VPN up
   -b, --backup-state              in case of start, backup current state to stdout as single string (in case of an error, it will try to restore the original state but will not write it to stdout)
   -r, --restore-state STATE       in case of stop, restore previous state from STATE (use -b to get a valid STATE string)

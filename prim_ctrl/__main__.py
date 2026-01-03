@@ -13,7 +13,7 @@ import time
 from abc import ABC, abstractmethod
 from collections.abc import Awaitable
 from contextlib import contextmanager, nullcontext, suppress
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import FrameType
 from typing import Callable, Iterator, Optional, Tuple, cast
@@ -787,16 +787,36 @@ class LocalTailscale(Manageable):
                 await asyncio.sleep(wait_on_fresh_start)
         return start_result
 
-class RemoteTailscale(Device):
+class StatSeen(ABC):
+    @abstractmethod
+    async def seen(self, days: int) -> bool:
+        pass
+
+class StatSeenDevice(Device, StatSeen):
+    pass
+
+class RemoteTailscale(StatSeenDevice):
     def __init__(self, tailscale: Tailscale, machine_name: str, manager: Manager):
         super().__init__(f'{machine_name}.{tailscale.tailnet}', manager)
+        self.tailscale = tailscale
+        self.machine_name = machine_name
         self.__qualname__ = "Remote Tailscale"
 
     async def ping(self, availability_hint: bool | None = None):
         logger.debug("Pinging %s (%s)", LazyStr(self.get_class_name), self.host)
         # network ping not always works when the device is online, use tailscale ping instead
         success, stdout, stderr = await Subprocess.tailscale(['ping', '--c', '1', '--timeout', '2s', self.host])
-        return success or stderr.rstrip() == "direct connection not established" and stdout.startswith(f"pong from {self.host.split('.', maxsplit=1)[0]}")
+        return success or stderr.rstrip() == "direct connection not established" and stdout.startswith(f"pong from {self.machine_name}")
+
+    async def seen(self, days: int) -> bool:
+        device_info = await self.tailscale.device(self.machine_name)
+        logger.debug("%s connected: %s, last seen: %s", LazyStr(self.get_class_name), device_info.connected_to_control, device_info.last_seen)
+        if device_info.connected_to_control:
+            return True
+        if not device_info.last_seen or days == 0:
+            return False
+        difference = datetime.now(timezone.utc).replace(microsecond=0) - device_info.last_seen
+        return difference < timedelta(days=days)
 
 ########
 
@@ -1020,7 +1040,7 @@ class Local:
         self.vpn = vpn
 
 class Phone:
-    def __init__(self, zeroconf_sftp: ZeroconfSshService, vpn: Device | None, remote_sftp: SshService | None, state: PhoneState | None):
+    def __init__(self, zeroconf_sftp: ZeroconfSshService, vpn: StatSeenDevice | None, remote_sftp: SshService | None, state: PhoneState | None):
         self.zeroconf_sftp = zeroconf_sftp
         self.vpn = vpn
         self.remote_sftp = remote_sftp
@@ -1142,13 +1162,19 @@ class Control:
                             if not state[Control.PHONE_WIFI] and not self.args.accept_cellular:
                                 raise RuntimeError(f"Phone is not on Wi-Fi network")
                         else:
-                            state[Control.PHONE_VPN] = await self.phone.vpn.test()
-                            if state[Control.PHONE_VPN]:
+                            state[Control.PHONE_VPN] = phone_vpn_state = await self.phone.vpn.test()
+                            if phone_vpn_state:
                                 state[Control.PHONE_SFTP] = remote_accessible = await self.phone.remote_sftp.test()
                         # start changing phone state
+                        phone_vpn = state[Control.PHONE_VPN]
+                        if not phone_vpn and self.args.restart_vpn is not None and not await self.phone.vpn.seen(self.args.restart_vpn):
+                            logger.info("%s wasn't seen for %d days", LazyStr(self.phone.vpn.get_class_name), self.args.restart_vpn)
+                            phone_vpn = await self.phone.vpn.start(10, 60)
+                            if not self.phone.state:
+                                state[Control.PHONE_SFTP] = remote_accessible = await self.phone.remote_sftp.test()
                         if self.phone.state:
                             if not state[Control.PHONE_SFTP]:
-                                if not state[Control.PHONE_VPN]:
+                                if not phone_vpn:
                                     if state[Control.PHONE_WIFI]:
                                         try:
                                             zeroconf_accessible = await self.phone.zeroconf_sftp.start(10, 30)
@@ -1163,14 +1189,14 @@ class Control:
                                     if state[Control.PHONE_WIFI]:
                                         zeroconf_accessible = await self.phone.zeroconf_sftp.test()
                             else:
-                                if not state[Control.PHONE_VPN]:
+                                if not phone_vpn:
                                     if not state[Control.PHONE_WIFI] or not (zeroconf_accessible := await self.phone.zeroconf_sftp.test()):
                                         await self.phone.vpn.start(10, 60)
                                         remote_accessible = await self.phone.remote_sftp.test()
                                 else:
                                     zeroconf_accessible, remote_accessible = await gather_with_taskgroup(self.phone.zeroconf_sftp.test(), self.phone.remote_sftp.test())
                         else:
-                            if not state[Control.PHONE_VPN]:
+                            if not phone_vpn:
                                 if not (zeroconf_accessible := await self.phone.zeroconf_sftp.test()):
                                     try:
                                         zeroconf_accessible = await self.phone.zeroconf_sftp.start(10, 30)
@@ -1235,7 +1261,7 @@ class AutomateControl(Control):
             description="To use --tailscale option you must install Tailscale and configure Tailscale VPN on your phone and your laptop\n"
                 "To use --funnel option you must configure Tailscale Funnel on your laptop for prim-ctrl's local webhook to accept responses from the Automate app\n"
                 "   (eg.: tailscale funnel --bg --https=8443 --set-path=/prim-ctrl \"http://127.0.0.1:12345\")\n"
-                "Note: --funnel, --backup-state and --restore-state options can be used only when --tailscale is used\n"
+                "Note: --funnel, --restart-vpn, --backup-state and --restore-state options can be used only when --tailscale is used\n"
                 "Note: --backup-state is accurate only, when --funnel is used\n"
                 "Note: --accept-cellular option can be used only when --funnel is used")
         vpn_group.add_argument('--tailscale', nargs=4, metavar=('tailnet', 'secretfile', 'remote-machine-name', 'sftp-port'), help=
@@ -1250,6 +1276,7 @@ class AutomateControl(Control):
             "local-port:          12345 - if you used the example tailscale funnel command above (the local webhook will be started on this port)\n"
             "local-path:          /prim-ctrl - if you used the example tailscale funnel command above\n"
             "external-port:       8443 - if you used the example tailscale funnel command above")
+        vpn_group.add_argument('-rv', '--restart-vpn', metavar="DAYS", help="in case of start, even if connected locally, but VPN is not used in the past DAYS, start VPN up", type=int, default=None, action='store')
         Control.setup_parser_vpngroup(vpn_group)
 
         parser.set_defaults(runner=AutomateControl.runner)
@@ -1259,6 +1286,8 @@ class AutomateControl(Control):
         Control.prepare(args)
         if args.funnel and not args.tailscale:
             raise ValueError("--funnel option can be used only when --tailscale is used")
+        if args.restart_vpn and not args.tailscale:
+            raise ValueError("--restart-vpn option can be used only when --tailscale is used")
         if args.backup_state and not args.tailscale:
             raise ValueError("--backup-state option can be used only when --tailscale is used")
         if args.restore_state and not args.tailscale:
