@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.7.14
+## 0.8.0
 
 - Add --restart-vpn option
 - Restart local tailscale while waiting for funnel TCP forwarders to be set up
