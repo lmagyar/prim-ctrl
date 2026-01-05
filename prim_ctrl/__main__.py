@@ -716,13 +716,14 @@ class Tailscale():
 class Funnel(Pingable):
     LOCAL_HOST = '127.0.0.1'
 
-    def __init__(self, tailscale: Tailscale, machine_name: str, local_port: int, local_path: str, external_port: int, dns_resolver: DnsResolver):
+    def __init__(self, tailscale: Tailscale, machine_name: str, local_port: int, local_path: str, external_port: int, dns_resolver: DnsResolver, local_tailscale: LocalTailscale):
         self.machine_name = machine_name
         self.local_port = local_port
         self.external_name = f'{machine_name}.{tailscale.tailnet}'
         self.external_port = external_port
         self.external_url = f'https://{machine_name}.{tailscale.tailnet}:{external_port}{local_path}'
         self.dns_resolver = dns_resolver
+        self.local_tailscale = local_tailscale
 
     async def wait_for(self, available: bool, timeout: float):
         self._sleepcounter = 0
@@ -737,6 +738,10 @@ class Funnel(Pingable):
         return True
 
     async def _sleep_while_wait(self, available: bool):
+        if self.local_tailscale.is_started_now and 0 != self._sleepcounter and 0 == self._sleepcounter % 3:
+            logger.info("Restarting %s to retrigger public DNS records' configuration at Tailscale...", LazyStr(self.local_tailscale.get_class_name))
+            await self.local_tailscale.stop(10, 30)
+            await self.local_tailscale.start(10, 30)
         if 0 != self._sleepcounter and 0 == self._sleepcounter % 6:
             logger.info("Waiting for public DNS records to be updated for %s (%s)...", LazyStr(self.get_class_name), self.external_name)
         await asyncio.sleep(10)
@@ -1345,10 +1350,10 @@ class AutomateControl(Control):
 
             secrets = Secrets()
             automate = Automate(secrets, force_close_session, args.automate_account, args.automate_device, args.automate_tokenfile)
-            funnel = Funnel(tailscale, args.funnel[0], int(args.funnel[1]), args.funnel[2], int(args.funnel[3]), external_dns_resolver) if tailscale and args.funnel else None
             tailscale = Tailscale(secrets, general_session, _tailscale_tailnet(), _tailscale_secretfile()) if args.tailscale else None
             local_tailscale = LocalTailscale(tailscale, _funnel_local_machine_name_or_none(), LocalTailscaleManager()) if tailscale else None
             remote_tailscale = RemoteTailscale(tailscale, _tailscale_remote_machine_name(), AutomateTailscaleManager(automate)) if tailscale else None
+            funnel = Funnel(tailscale, _funnel_local_machine_name(), _funnel_local_port(), _funnel_local_path(), _funnel_external_port(), external_dns_resolver, local_tailscale) if tailscale and local_tailscale and args.funnel else None
             pftpd_manager = AutomatePftpdManager(automate)
             zeroconf_pftpd = ZeroconfPftpd(args.server_name, service_cache, service_resolver, args.keyfile, pftpd_manager)
             remote_pftpd = RemotePftpd(remote_tailscale.host, _tailscale_sftp_port(), args.server_name, args.keyfile, pftpd_manager) if remote_tailscale else None

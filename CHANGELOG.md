@@ -2,6 +2,7 @@
 
 ## 0.8.0
 
+- Restart local tailscale while waiting for funnel DNS records to be set up
 - Add --restart-vpn option
 - Restart local tailscale while waiting for funnel TCP forwarders to be set up
 - Breaking: move secretfile argument from funnel to tailscale option
