@@ -752,12 +752,17 @@ class LocalTailscaleManager(Manager):
             raise RuntimeError("Failed to shut down local Tailscale")
 
 class LocalTailscale(Manageable):
-    def __init__(self, tailscale: Tailscale, funnel: Funnel | None, manager: Manager):
+    def __init__(self, tailscale: Tailscale, machine_name: str | None, manager: Manager):
         super().__init__(manager)
         self.tailscale = tailscale
-        self.funnel = funnel
+        self.machine_name = machine_name
         self.__qualname__ = "Local Tailscale"
-        self._waited_on_fresh_start = False
+        self._checked_fresh_start = False
+        self._is_started_now = False
+
+    @property
+    def is_started_now(self) -> bool:
+        return self._is_started_now
 
     async def ping(self, availability_hint: bool | None = None):
         logger.debug("Getting status of %s", LazyStr(self.get_class_name))
@@ -770,13 +775,14 @@ class LocalTailscale(Manageable):
         await asyncio.sleep(0.250)
 
     async def start(self, repeat: float, timeout: float):
-        if not self._waited_on_fresh_start and self.funnel:
-            device_info = await self.tailscale.device(self.funnel.machine_name)
+        if not self._checked_fresh_start and self.machine_name:
+            device_info = await self.tailscale.device(self.machine_name)
         start_result = await super().start(repeat, timeout)
-        if start_result and not self._waited_on_fresh_start and self.funnel:
-            self._waited_on_fresh_start = True
+        self._is_started_now = start_result
+        if start_result and not self._checked_fresh_start and self.machine_name:
+            self._checked_fresh_start = True
             max_last_seen_age = 7200
-            wait_on_fresh_start = 10
+            wait_on_fresh_start = 15
             difference = datetime.now(timezone.utc).replace(microsecond=0) - device_info.last_seen if device_info.last_seen else None
             difference_sec = difference.total_seconds() if difference else None
             if difference_sec is None or difference_sec > max_last_seen_age:
@@ -955,7 +961,7 @@ class ExternalWebhookPing(WebhookPing):
         self.local_tailscale = local_tailscale
 
     async def _sleep_while_wait(self, available: bool):
-        if 0 != self._sleepcounter and 0 == self._sleepcounter % 15:
+        if self.local_tailscale.is_started_now and 0 != self._sleepcounter and 0 == self._sleepcounter % 15:
             logger.info("Restarting %s to retrigger Funnel TCP forwarders' configuration at Tailscale...", LazyStr(self.local_tailscale.get_class_name))
             await self.local_tailscale.stop(10, 30)
             await self.local_tailscale.start(10, 30)
@@ -1317,15 +1323,35 @@ class AutomateControl(Control):
             service_browser = SftpServiceBrowser(zeroconf)
             await service_browser.add_service_listener(service_listener)
 
+            def _tailscale_tailnet():
+                return args.tailscale[0]
+            def _tailscale_secretfile():
+                return args.tailscale[1]
+            def _tailscale_remote_machine_name():
+                return args.tailscale[2]
+            def _tailscale_sftp_port():
+                return int(args.tailscale[3])
+
+            def _funnel_local_machine_name_or_none():
+                return args.funnel[0] if args.funnel else None
+            def _funnel_local_machine_name():
+                return args.funnel[0]
+            def _funnel_local_port():
+                return int(args.funnel[1])
+            def _funnel_local_path():
+                return args.funnel[2]
+            def _funnel_external_port():
+                return int(args.funnel[3])
+
             secrets = Secrets()
             automate = Automate(secrets, force_close_session, args.automate_account, args.automate_device, args.automate_tokenfile)
-            tailscale = Tailscale(secrets, general_session, args.tailscale[0], args.tailscale[1]) if args.tailscale else None
             funnel = Funnel(tailscale, args.funnel[0], int(args.funnel[1]), args.funnel[2], int(args.funnel[3]), external_dns_resolver) if tailscale and args.funnel else None
-            local_tailscale = LocalTailscale(tailscale, funnel, LocalTailscaleManager()) if tailscale else None
-            remote_tailscale = RemoteTailscale(tailscale, args.tailscale[2], AutomateTailscaleManager(automate)) if tailscale else None
+            tailscale = Tailscale(secrets, general_session, _tailscale_tailnet(), _tailscale_secretfile()) if args.tailscale else None
+            local_tailscale = LocalTailscale(tailscale, _funnel_local_machine_name_or_none(), LocalTailscaleManager()) if tailscale else None
+            remote_tailscale = RemoteTailscale(tailscale, _tailscale_remote_machine_name(), AutomateTailscaleManager(automate)) if tailscale else None
             pftpd_manager = AutomatePftpdManager(automate)
             zeroconf_pftpd = ZeroconfPftpd(args.server_name, service_cache, service_resolver, args.keyfile, pftpd_manager)
-            remote_pftpd = RemotePftpd(remote_tailscale.host, int(args.tailscale[3]), args.server_name, args.keyfile, pftpd_manager) if remote_tailscale else None
+            remote_pftpd = RemotePftpd(remote_tailscale.host, _tailscale_sftp_port(), args.server_name, args.keyfile, pftpd_manager) if remote_tailscale else None
 
             async with Webhooks(Funnel.LOCAL_HOST, funnel.local_port) if funnel else nullcontext() as webhooks:
                 local = Local(local_tailscale)
