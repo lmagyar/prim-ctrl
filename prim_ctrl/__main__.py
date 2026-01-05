@@ -16,7 +16,7 @@ from contextlib import contextmanager, nullcontext, suppress
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import FrameType
-from typing import Callable, Iterator, Optional, Tuple, cast
+from typing import Callable, Iterator, Optional, Tuple
 
 import aiohttp
 import asyncssh
