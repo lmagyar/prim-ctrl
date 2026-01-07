@@ -26,7 +26,7 @@ import dns.rdatatype
 from aiohttp import ClientTimeout, web
 from aiohttp.abc import AbstractResolver as DnsResolver, ResolveResult
 from platformdirs import user_cache_dir
-from tailscale import Device as TailscaleDeviceInfo, Tailscale as TailscaleApi
+from tailscale import Device as TailscaleDeviceInfo, Tailscale as TailscaleApi, TokenStorage
 from zeroconf import Zeroconf, ServiceInfo, ServiceListener as ZeroconfServiceListener
 from zeroconf.asyncio import AsyncZeroconf
 
@@ -486,9 +486,6 @@ class Secrets:
         with open(str(self.secrets_path / tokenfile), 'wt') as file:
             file.write(token)
 
-    def get_age(self, tokenfile: str):
-        return (datetime.now(timezone.utc) - datetime.fromtimestamp(os.stat(str(self.secrets_path / tokenfile)).st_mtime, timezone.utc)).total_seconds()
-
 class Cache:
     PRIM_SYNC_APP_NAME = 'prim-sync'
 
@@ -662,49 +659,36 @@ class ZeroconfPftpd(ZeroconfSshService):
 
 ########
 
-class Tailscale():
+class SecretsTokenStorage(TokenStorage):
     TOKEN_SUFFIX = '.token'
 
-    def __init__(self, secrets: Secrets, session: aiohttp.ClientSession, tailnet: str, secretfile: str):
+    def __init__(self, secrets: Secrets, secretfile: str) -> None:
         self.secrets = secrets
-        self.session = session
-        self.tailnet = tailnet
-        self.secretfile = secretfile
-        self.tailscale_api = None
+        self.tokenfile = secretfile + SecretsTokenStorage.TOKEN_SUFFIX
 
-    async def _start(self):
-        # create new access_token from client_secret if previous access_token is expired or nonexistent
-        tokenfile = self.secretfile + Tailscale.TOKEN_SUFFIX
-        token = None
+    async def get_token(self) -> tuple[str, datetime] | None:
         try:
-            if 3300 > self.secrets.get_age(tokenfile):
-                token = self.secrets.get(tokenfile)
-        except FileNotFoundError:
-            pass
-        if token is None:
-            secret = self.secrets.get(self.secretfile)
-            client_id = secret.split('-')[2]
-            data = {
-                "client_id": client_id,
-                "client_secret": secret,
-                "grant_type": "client_credentials",
-                "scope" : "devices:core:read"
-            }
-            logger.debug("Generating new Tailscale API token")
-            async with self.session.post('https://api.tailscale.com/api/v2/oauth/token', data=data) as response:
-                json_response = await response.json()
-            expires_in = json_response.get('expires_in')
-            token = json_response.get('access_token')
-            assert expires_in is not None and token is not None
-            if expires_in < 3600:
-                raise RuntimeError(f'Tailscale access token received shorter that 1 hour, {expires_in} seconds expiration')
-            self.secrets.set(tokenfile, token)
-        self.tailscale_api = TailscaleApi(session=self.session, request_timeout=30, tailnet=self.tailnet, api_key=token)
+            expires_at, access_token = self.secrets.get(self.tokenfile).split('|', maxsplit=1)
+            return access_token, datetime.strptime(expires_at, "%Y-%m-%d %H:%M:%S%z")
+        except Exception:
+            return None
+
+    async def set_token(self, access_token: str, expires_at: datetime) -> None:
+        try:
+            self.secrets.set(self.tokenfile, expires_at.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M:%S%z") + '|' + access_token)
+        except Exception:
+            return None
+
+class Tailscale():
+    def __init__(self, secrets: Secrets, session: aiohttp.ClientSession, tailnet: str, secretfile: str):
+        self.tailnet = tailnet
+
+        client_secret = secrets.get(secretfile)
+        client_id = client_secret.split('-')[2]
+        self.tailscale_api = TailscaleApi(session=session, request_timeout=30, tailnet=tailnet,
+            oauth_client_id=client_id, oauth_client_secret=client_secret, token_storage=SecretsTokenStorage(secrets, secretfile))
 
     async def device(self, machine_name: str) -> TailscaleDeviceInfo:
-        if not self.tailscale_api:
-            await self._start()
-        assert self.tailscale_api is not None
         logger.debug("Calling Tailscale API for devices")
         devices = await self.tailscale_api.devices()
         name = f"{machine_name}.{self.tailnet}"
