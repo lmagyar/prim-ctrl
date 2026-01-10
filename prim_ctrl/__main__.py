@@ -1262,7 +1262,7 @@ class AutomateControl(Control):
         vpn_group.add_argument('--tailscale', nargs=4, metavar=('tailnet', 'secretfile', 'remote-machine-name', 'sftp-port'), help=
             "tailnet:             your Tailscale tailnet name (eg. tailxxxx.ts.net)\n"
             "secretfile:          filename containing Tailscale's Client secret (not API access token, not Auth key) that located under your .secrets folder\n"
-            "                     (generated on https://login.tailscale.com/admin/settings/oauth, with 'devices:core:read' scope,\n"
+            "                     (generated on https://login.tailscale.com/admin/settings/trust-credentials, with 'devices:core:read' scope,\n"
             "                     save only the Client secret in the file, the Client ID is part of it)\n"
             "remote-machine-name: your phone's name within your tailnet (just the name, without the tailnet)\n"
             "sftp-port:           Primitive FTPd's sftp port")

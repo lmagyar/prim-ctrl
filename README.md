@@ -182,7 +182,7 @@ VPN:
   --tailscale tailnet secretfile remote-machine-name sftp-port
                                   tailnet:             your Tailscale tailnet name (eg. tailxxxx.ts.net)
                                   secretfile:          filename containing Tailscale's Client secret (not API access token, not Auth key) that located under your .secrets folder
-                                                       (generated on https://login.tailscale.com/admin/settings/oauth, with 'devices:core:read' scope,
+                                                       (generated on https://login.tailscale.com/admin/settings/trust-credentials, with 'devices:core:read' scope,
                                                        save only the Client secret in the file, the Client ID is part of it)
                                   remote-machine-name: your phone's name within your tailnet (just the name, without the tailnet)
                                   sftp-port:           Primitive FTPd's sftp port
