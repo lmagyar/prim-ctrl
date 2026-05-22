@@ -10,7 +10,7 @@ Though Primitive FTPd consumes minimal power when it is not used, remote start/s
 
 But in case of Tailscale, it is a real battery and mobile network data drain when not used, local and remote start/stop is de facto very useful.
 
-With the help of this script you can sync your phone with eg. your home NAS server whereever your phone is on a WiFi network - or even on cellular. Your phone doesn't have to be on the same LAN to make zeroconf working when you have alternative access through VPN.
+With the help of this script you can sync your phone with eg. your home NAS server whereever your phone is on a WiFi network - or even on cellular. Your phone doesn't have to be on the same WiFi to make zeroconf working when you have alternative access through VPN. But VPN can help even if the phone is on the same WiFi as eg. your laptop, but due to networking restrictions they can't access each other directly (eg. hotel or airport WiFi).
 
 See my other project, https://github.com/lmagyar/prim-sync, for bidirectional and unidirectional sync over SFTP (multiplatform Python script optimized for the Primitive FTPd SFTP server).
 
@@ -120,6 +120,7 @@ But if the script runs scheduled, we can't be sure whether the phone is on WiFi,
 Notes:
 - Even when -b option is **not** used, the script will output 'connected=(local|remote)', what you can use to determine whether to use -a option for the prim-sync script
 - If local Tailscale VPN was disconnected for a longer period (several hours), the public DNS records for Funnel are removed by Tailscale, and after connecting local Tailscale VPN to the tailnet it can take up to 10 minutes for Funnel's public DNS records to show up for your tailnet domain. If the script connects local Tailscale VPN to the tailnet, then it regularly checks and waits up to 10 minutes for the public DNS records to get updated.
+- If you want to interrupt the synchronization, press Ctrl-C once (only once), and wait few seconds until the script properly removes temporary files, saves it's internal state and restores Primitive FTPd and VPN states. If you press Ctrl-C again, that interrupts the state persistence, Primitive FTPd and VPN state restoration also, ie. Primitive FTPd and VPN can remain running, and the next synchronization run will hash all changed files to recover from the interruption.
 
 ### Some example
 
