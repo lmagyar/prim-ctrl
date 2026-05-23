@@ -1211,6 +1211,7 @@ class Control:
                         print(StateSerializer.dumps(state))
                     except:
                         try:
+                            logger.info("Due to error, restoring local and remote state...")
                             await self._stop(state, stop_only_started = True)
                         except Exception as e:
                             logger.exception_or_error(e)
@@ -1221,6 +1222,7 @@ class Control:
                             await self.phone.zeroconf_sftp.start(10, 30)
                     except:
                         try:
+                            logger.info("Due to error, restoring local and remote state...")
                             await self._stop(None)
                         except Exception as e:
                             logger.exception_or_error(e)

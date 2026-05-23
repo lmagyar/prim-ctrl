@@ -2,6 +2,7 @@
 
 ## 0.8.0
 
+- Log when due to exception, local and remote state restore starts
 - Properly handle KeyboardInterrupt in case of asyncio
 - Update tailscale-fixed for built-in OAuth support
 - Restart local tailscale while waiting for funnel DNS records to be set up
