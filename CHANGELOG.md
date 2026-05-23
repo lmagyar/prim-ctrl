@@ -2,6 +2,7 @@
 
 ## 0.8.0
 
+- Decrease last-seen limit and increase wait time after fresh new local Tailscale startup
 - Log when due to exception, local and remote state restore starts
 - Properly handle KeyboardInterrupt in case of asyncio
 - Update tailscale-fixed for built-in OAuth support
