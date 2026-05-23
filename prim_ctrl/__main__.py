@@ -1350,20 +1350,23 @@ class AutomateControl(Control):
                 control = AutomateControl(args, local, phone, keyboard_interrupt)
                 await control.run()
 
-async def main():
+async def async_main():
     args = None
+    parser = argparse.ArgumentParser(
+        description="Remote control of your phone's Primitive FTPd and optionally Tailscale app statuses via the Automate app, for more details see https://github.com/lmagyar/prim-ctrl",
+        formatter_class=WideHelpFormatter)
+    subparsers = parser.add_subparsers(required=True,
+        title="Phone app to use for control")
+
+    AutomateControl.setup_subparser(subparsers)
+
+    args = parser.parse_args()
+    runner: Callable[[argparse.Namespace], Awaitable[None]] = args.runner
+    await runner(args)
+
+def main():
     try:
-        parser = argparse.ArgumentParser(
-            description="Remote control of your phone's Primitive FTPd and optionally Tailscale app statuses via the Automate app, for more details see https://github.com/lmagyar/prim-ctrl",
-            formatter_class=WideHelpFormatter)
-        subparsers = parser.add_subparsers(required=True,
-            title="Phone app to use for control")
-
-        AutomateControl.setup_subparser(subparsers)
-
-        args = parser.parse_args()
-        runner: Callable[[argparse.Namespace], Awaitable[None]] = args.runner
-        await runner(args)
+        asyncio.run(async_main())
 
     except Exception as e:
         logger.exception_or_error(e)
@@ -1374,4 +1377,4 @@ async def main():
     return logger.exitcode
 
 def run():
-    sys.exit(asyncio.run(main()))
+    sys.exit(main())

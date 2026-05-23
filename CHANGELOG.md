@@ -2,6 +2,7 @@
 
 ## 0.8.0
 
+- Properly handle KeyboardInterrupt in case of asyncio
 - Update tailscale-fixed for built-in OAuth support
 - Restart local tailscale while waiting for funnel DNS records to be set up
 - Add --restart-vpn option
