@@ -733,12 +733,18 @@ class Funnel(Pingable):
 
 class LocalTailscaleManager(Manager):
     async def start(self):
-        if not (await Subprocess.tailscale(['up']))[0]:
-            raise RuntimeError("Failed to start up local Tailscale")
+        success, _, stderr = await Subprocess.tailscale(['up'])
+        if not success:
+            exc = RuntimeError("Failed to start up local Tailscale")
+            exc.add_note(stderr.rstrip().replace("\n", "; "))
+            raise exc
 
     async def stop(self):
-        if not (await Subprocess.tailscale(['down']))[0]:
-            raise RuntimeError("Failed to shut down local Tailscale")
+        success, _, stderr = await Subprocess.tailscale(['down'])
+        if not success:
+            exc = RuntimeError("Failed to shut down local Tailscale")
+            exc.add_note(stderr.rstrip().replace("\n", "; "))
+            raise exc
 
 class LocalTailscale(Manageable):
     def __init__(self, tailscale: Tailscale, machine_name: str | None, manager: Manager):

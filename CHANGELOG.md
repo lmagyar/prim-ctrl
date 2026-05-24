@@ -2,6 +2,7 @@
 
 ## 0.8.0
 
+- Add stderr to exception notes in case of tailscale up/down
 - Drop tailscale-fixed package in favour of the updated tailscale package
 - Decrease last-seen limit and increase wait time after fresh new local Tailscale startup
 - Log when due to exception, local and remote state restore starts
