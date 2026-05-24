@@ -227,12 +227,13 @@ class Subprocess:
 class ExternalDnsResolver(DnsResolver):
     EXTERNAL_DNS = '1.1.1.1'
 
-    def __init__(self):
+    def __init__(self, where: str = EXTERNAL_DNS):
+        self.where = where
         self.dns_resolver = None
         self.cache = dict[tuple[str, int, socket.AddressFamily], tuple[float, list[ResolveResult]]]()
 
     async def resolve(self, host: str, port: int = 0, family: socket.AddressFamily = socket.AF_UNSPEC) -> list[ResolveResult]:
-        logger.debug("Resolving DNS for %s:%i (%s)", host, port, "ipv6" if family == socket.AF_INET6 else "ipv4")
+        logger.debug("Resolving DNS at %s for %s:%i (%s)", self.where, host, port, "ipv6" if family == socket.AF_INET6 else "ipv4")
 
         key = (host, port, family)
         expiration, hosts = self.cache.get(key, (None, None))
@@ -246,7 +247,7 @@ class ExternalDnsResolver(DnsResolver):
 
         try:
             if not self.dns_resolver:
-                self.dns_resolver = await dns.asyncresolver.make_resolver_at(ExternalDnsResolver.EXTERNAL_DNS)
+                self.dns_resolver = await dns.asyncresolver.make_resolver_at(self.where)
             answer = await self.dns_resolver.resolve(host, rdtype=dns.rdatatype.AAAA if family == socket.AF_INET6 else dns.rdatatype.A)
         except (dns.resolver.NXDOMAIN, dns.resolver.NoAnswer) as e:
             msg = e.args[1] if len(e.args) >= 1 else "DNS lookup failed"
@@ -709,18 +710,29 @@ class Funnel(Pingable):
         self.external_name = f'{machine_name}.{tailscale.tailnet}'
         self.external_port = external_port
         self.external_url = f'https://{machine_name}.{tailscale.tailnet}:{external_port}{local_path}'
-        self.dns_resolver = dns_resolver
+        self.external_public_dns_resolver = dns_resolver
         self.local_tailscale = local_tailscale
+        self.external_tailscale_dns_resolver = None
 
     async def wait_for(self, available: bool, timeout: float):
         self._sleepcounter = 0
         await super().wait_for(available, timeout)
 
     async def ping(self, availability_hint: bool | None = None):
-        logger.debug("Resolving DNS for %s (%s)", LazyStr(self.get_class_name), self.external_name)
+        logger.debug("Resolving DNS for %s (%s:%s)", LazyStr(self.get_class_name), self.external_name, self.external_port)
+        if self.external_tailscale_dns_resolver is None:
+            self.external_tailscale_dns_resolver = ExternalDnsResolver(await self.local_tailscale.external_dns_resolver())
+        # first try at Tailscale's DNS, if it doesn't know, we should not resolve at a public DNS and cache nxdomain for 5 minutes
         try:
-            _answer = await self.dns_resolver.resolve(self.external_name, self.external_port)
-        except Exception:
+            _answer = await self.external_tailscale_dns_resolver.resolve(self.external_name, self.external_port)
+        except Exception as e:
+            logger.debug("Resolving at Tailscale's external DNS has failed: %s", LazyStr(repr, e))
+            return False
+        # then try at a public DNS
+        try:
+            _answer = await self.external_public_dns_resolver.resolve(self.external_name, self.external_port)
+        except Exception as e:
+            logger.debug("Resolving at public external DNS has failed: %s", LazyStr(repr, e))
             return False
         return True
 
@@ -780,7 +792,7 @@ class LocalTailscale(Manageable):
         if start_result and not self._checked_fresh_start and self.machine_name:
             self._checked_fresh_start = True
             max_last_seen_age = 3600
-            wait_on_fresh_start = 20
+            wait_on_fresh_start = 5
             difference = datetime.now(timezone.utc).replace(microsecond=0) - device_info.last_seen if device_info.last_seen else None
             difference_sec = difference.total_seconds() if difference else None
             if difference_sec is None or difference_sec > max_last_seen_age:
@@ -790,6 +802,17 @@ class LocalTailscale(Manageable):
                      LazyStr((lambda last_seen : str(last_seen.astimezone())[:19] if last_seen else None), device_info.last_seen), LazyStr(difference))
                 await asyncio.sleep(wait_on_fresh_start)
         return start_result
+
+    async def external_dns_resolver(self):
+        logger.debug("Getting external DNS resolver of %s for ts.net", LazyStr(self.get_class_name))
+        success, stdout, stderr = await Subprocess.tailscale(['dns', 'status', '--json'])
+        if not success:
+            exc = RuntimeError("Failed to get local DNS status from local Tailscale")
+            exc.add_note(stderr.rstrip().replace("\n", "; "))
+            raise exc
+        status = json.loads(stdout)
+        external_dns_resolver = next(addr['Addr'] for addr in status['SplitDNSRoutes']['ts.net.'] if ':' not in addr['Addr'])
+        return str(external_dns_resolver)
 
 class StatSeen(ABC):
     @abstractmethod

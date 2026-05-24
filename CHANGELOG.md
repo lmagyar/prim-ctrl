@@ -2,10 +2,11 @@
 
 ## 0.8.0
 
+- Use Tailscale's own DNS before querying the public DNS
+- Decrease last-seen limit and decrease wait time after fresh new local Tailscale startup
 - Add original exception to exception notes instead of using traceback context
 - Add stderr to exception notes in case of tailscale up/down
 - Drop tailscale-fixed package in favour of the updated tailscale package
-- Decrease last-seen limit and increase wait time after fresh new local Tailscale startup
 - Log when due to exception, local and remote state restore starts
 - Properly handle KeyboardInterrupt in case of asyncio
 - Update tailscale-fixed for built-in OAuth support
