@@ -248,9 +248,12 @@ class ExternalDnsResolver(DnsResolver):
             if not self.dns_resolver:
                 self.dns_resolver = await dns.asyncresolver.make_resolver_at(ExternalDnsResolver.EXTERNAL_DNS)
             answer = await self.dns_resolver.resolve(host, rdtype=dns.rdatatype.AAAA if family == socket.AF_INET6 else dns.rdatatype.A)
-        except (dns.resolver.NXDOMAIN, dns.resolver.NoAnswer) as exc:
-            msg = exc.args[1] if len(exc.args) >= 1 else "DNS lookup failed"
-            raise OSError(None, msg) from exc
+        except (dns.resolver.NXDOMAIN, dns.resolver.NoAnswer) as e:
+            msg = e.args[1] if len(e.args) >= 1 else "DNS lookup failed"
+            exc = OSError(None, msg)
+            # this is captured in a TaskGroup that drops traceback information from "from e"
+            exc.add_note(repr(e))
+            raise exc from None
 
         hosts = []
         for rr in answer:
@@ -982,7 +985,10 @@ class AutomatePhoneState(PhoneState):
         try:
             await self.local_webhook_ping.wait_for(True, test_timeout)
         except Exception as e:
-            raise RuntimeError(f"Local Funnel is not configured properly for {self.funnel.external_url}") from e
+            exc = RuntimeError(f"Local Funnel is not configured properly for {self.funnel.external_url}")
+            # this is captured in a TaskGroup that drops traceback information from "from e"
+            exc.add_note(repr(e))
+            raise exc from None
 
         # test funnel's DNS resolvability, if local Tailscale is freshly started up after longer down state, it can take up to 10 minutes for public DNS records to get updated
         test_timeout = 600.0
@@ -990,7 +996,10 @@ class AutomatePhoneState(PhoneState):
         try:
             await self.funnel.wait_for(True, test_timeout)
         except Exception as e:
-            raise RuntimeError(f"Funnel's DNS is not configured by Tailscale for {self.funnel.external_name}") from e
+            exc = RuntimeError(f"Funnel's DNS is not configured by Tailscale for {self.funnel.external_name}")
+            # this is captured in a TaskGroup that drops traceback information from "from e"
+            exc.add_note(repr(e))
+            raise exc from None
 
         # test external funnel + webhooks availability, ie. test funnel tcp forwarders
         # it will NOT be routed locally, so the route is equivalent with / similar to what Automate will see
@@ -999,7 +1008,10 @@ class AutomatePhoneState(PhoneState):
         try:
             await self.external_webhook_ping.wait_for(True, test_timeout)
         except Exception as e:
-            raise RuntimeError(f"Funnel TCP forwarders are not configured by Tailscale for {self.funnel.external_name}") from e
+            exc = RuntimeError(f"Funnel TCP forwarders are not configured by Tailscale for {self.funnel.external_name}")
+            # this is captured in a TaskGroup that drops traceback information from "from e"
+            exc.add_note(repr(e))
+            raise exc from None
 
         # get state
         logger.debug("Getting Phone state (repeat after %ds, timeout is %ds)", int(repeat), int(timeout))
@@ -1034,7 +1046,12 @@ async def gather_with_taskgroup(*coros):
             tasks = [tg.create_task(coro) for coro in coros]
         return tuple([task.result() for task in tasks])
     except ExceptionGroup as eg:
-        raise eg.exceptions[0] from (None if len(eg.exceptions) == 1 else eg)
+        exc = eg.exceptions[0]
+        # this can be captured in another TaskGroup that drops traceback information from "from e"
+        if len(eg.exceptions) > 1:
+            for e in eg.exceptions[1:]:
+                exc.add_note(repr(e))
+        raise exc from None
 
 class Local:
     def __init__(self, vpn: Manageable | None):

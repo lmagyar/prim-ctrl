@@ -2,6 +2,7 @@
 
 ## 0.8.0
 
+- Add original exception to exception notes instead of using traceback context
 - Add stderr to exception notes in case of tailscale up/down
 - Drop tailscale-fixed package in favour of the updated tailscale package
 - Decrease last-seen limit and increase wait time after fresh new local Tailscale startup
