@@ -2,6 +2,7 @@
 
 ## 0.8.0
 
+- Win: Suppress asyncio transport \_\_del\_\_ exceptions (ValueError from closed pipes) during interpreter shutdown
 - Use Tailscale's own DNS before querying the public DNS
 - Decrease last-seen limit and decrease wait time after fresh new local Tailscale startup
 - Add original exception to exception notes instead of using traceback context
