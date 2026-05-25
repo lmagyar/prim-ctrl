@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.8.1
+
+- Use original OS DNS resolver instead of hard wired 1.1.1.1
+- Increase last-seen limit
+
 ## 0.8.0
 
 - Win: Suppress asyncio transport \_\_del\_\_ exceptions (ValueError from closed pipes) during interpreter shutdown

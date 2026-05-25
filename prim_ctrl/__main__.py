@@ -225,9 +225,7 @@ class Subprocess:
 # Note: aiohttp's AsyncResolver can't be used when asyncio.create_subprocess_exec is used
 #       aiohttp's AsyncResolver uses aiodns, that needs a SelectorEventLoop on Windows, and that's loop.subprocess_exec is not implemented, but required by asyncio.create_subprocess_exec
 class ExternalDnsResolver(DnsResolver):
-    EXTERNAL_DNS = '1.1.1.1'
-
-    def __init__(self, where: str = EXTERNAL_DNS):
+    def __init__(self, where: str):
         self.where = where
         self.dns_resolver = None
         self.cache = dict[tuple[str, int, socket.AddressFamily], tuple[float, list[ResolveResult]]]()
@@ -250,8 +248,8 @@ class ExternalDnsResolver(DnsResolver):
                 self.dns_resolver = await dns.asyncresolver.make_resolver_at(self.where)
             answer = await self.dns_resolver.resolve(host, rdtype=dns.rdatatype.AAAA if family == socket.AF_INET6 else dns.rdatatype.A)
         except (dns.resolver.NXDOMAIN, dns.resolver.NoAnswer) as e:
-            msg = e.args[1] if len(e.args) >= 1 else "DNS lookup failed"
-            exc = OSError(None, msg)
+            msg = '; '.join(e.args) if len(e.args) else "DNS lookup failed"
+            exc = LookupError(msg)
             # this is captured in a TaskGroup that drops traceback information from "from e"
             exc.add_note(repr(e))
             raise exc from None
@@ -271,7 +269,7 @@ class ExternalDnsResolver(DnsResolver):
                 )
             )
         if not hosts:
-            raise OSError(None, "DNS lookup failed")
+            raise LookupError("DNS lookup failed")
 
         self.cache[key] = (answer.expiration, hosts)
         return hosts
@@ -704,14 +702,14 @@ class Tailscale():
 class Funnel(Pingable):
     LOCAL_HOST = '127.0.0.1'
 
-    def __init__(self, tailscale: Tailscale, machine_name: str, local_port: int, local_path: str, external_port: int, dns_resolver: DnsResolver, local_tailscale: LocalTailscale):
+    def __init__(self, tailscale: Tailscale, machine_name: str, local_port: int, local_path: str, external_port: int, local_tailscale: LocalTailscale):
         self.machine_name = machine_name
         self.local_port = local_port
         self.external_name = f'{machine_name}.{tailscale.tailnet}'
         self.external_port = external_port
         self.external_url = f'https://{machine_name}.{tailscale.tailnet}:{external_port}{local_path}'
-        self.external_public_dns_resolver = dns_resolver
         self.local_tailscale = local_tailscale
+        self.external_public_dns_resolver = None
         self.external_tailscale_dns_resolver = None
 
     async def wait_for(self, available: bool, timeout: float):
@@ -720,15 +718,17 @@ class Funnel(Pingable):
 
     async def ping(self, availability_hint: bool | None = None):
         logger.debug("Resolving DNS for %s (%s:%s)", LazyStr(self.get_class_name), self.external_name, self.external_port)
-        if self.external_tailscale_dns_resolver is None:
-            self.external_tailscale_dns_resolver = ExternalDnsResolver(await self.local_tailscale.external_dns_resolver())
         # first try at Tailscale's DNS, if it doesn't know, we should not resolve at a public DNS and cache nxdomain for 5 minutes
+        if self.external_tailscale_dns_resolver is None:
+            self.external_tailscale_dns_resolver = ExternalDnsResolver(await self.local_tailscale.external_tailscale_dns_resolver())
         try:
             _answer = await self.external_tailscale_dns_resolver.resolve(self.external_name, self.external_port)
         except Exception as e:
             logger.debug("Resolving at Tailscale's external DNS has failed: %s", LazyStr(repr, e))
             return False
         # then try at a public DNS
+        if self.external_public_dns_resolver is None:
+            self.external_public_dns_resolver = ExternalDnsResolver(await self.local_tailscale.external_public_dns_resolver())
         try:
             _answer = await self.external_public_dns_resolver.resolve(self.external_name, self.external_port)
         except Exception as e:
@@ -791,7 +791,7 @@ class LocalTailscale(Manageable):
         self._is_started_now = start_result
         if start_result and not self._checked_fresh_start and self.machine_name:
             self._checked_fresh_start = True
-            max_last_seen_age = 3600
+            max_last_seen_age = 7200
             wait_on_fresh_start = 5
             difference = datetime.now(timezone.utc).replace(microsecond=0) - device_info.last_seen if device_info.last_seen else None
             difference_sec = difference.total_seconds() if difference else None
@@ -803,16 +803,23 @@ class LocalTailscale(Manageable):
                 await asyncio.sleep(wait_on_fresh_start)
         return start_result
 
-    async def external_dns_resolver(self):
-        logger.debug("Getting external DNS resolver of %s for ts.net", LazyStr(self.get_class_name))
+    async def _tailscale_dns_status(self):
         success, stdout, stderr = await Subprocess.tailscale(['dns', 'status', '--json'])
         if not success:
             exc = RuntimeError("Failed to get local DNS status from local Tailscale")
             exc.add_note(stderr.rstrip().replace("\n", "; "))
             raise exc
-        status = json.loads(stdout)
-        external_dns_resolver = next(addr['Addr'] for addr in status['SplitDNSRoutes']['ts.net.'] if ':' not in addr['Addr'])
-        return str(external_dns_resolver)
+        return json.loads(stdout)
+
+    async def external_public_dns_resolver(self):
+        logger.debug("Getting external public DNS resolver of %s", LazyStr(self.get_class_name))
+        status = await self._tailscale_dns_status()
+        return str(status['SystemDNS']['Nameservers'][0])
+
+    async def external_tailscale_dns_resolver(self):
+        logger.debug("Getting external Tailscale DNS resolver of %s for ts.net", LazyStr(self.get_class_name))
+        status = await self._tailscale_dns_status()
+        return str(next(addr['Addr'] for addr in status['SplitDNSRoutes']['ts.net.'] if ':' not in addr['Addr']))
 
 class StatSeen(ABC):
     @abstractmethod
@@ -991,12 +998,12 @@ class ExternalWebhookPing(WebhookPing):
 class AutomatePhoneState(PhoneState):
     VARIABLE_STATE = 'state'
 
-    def __init__(self, general_session: aiohttp.ClientSession, external_dns_session: aiohttp.ClientSession, webhooks: Webhooks, automate: Automate, funnel: Funnel, local_tailscale: LocalTailscale):
+    def __init__(self, general_session: aiohttp.ClientSession, external_public_dns_session: aiohttp.ClientSession, webhooks: Webhooks, automate: Automate, funnel: Funnel, local_tailscale: LocalTailscale):
         self.webhooks = webhooks
         self.automate = automate
         self.funnel = funnel
         self.local_webhook_ping = WebhookPing(general_session, funnel)
-        self.external_webhook_ping = ExternalWebhookPing(external_dns_session, funnel, local_tailscale)
+        self.external_webhook_ping = ExternalWebhookPing(external_public_dns_session, funnel, local_tailscale)
 
     async def get(self, repeat: float, timeout: float):
         logger.info("Getting Phone state...")
@@ -1342,15 +1349,11 @@ class AutomateControl(Control):
     async def runner(args: argparse.Namespace) -> None:
         AutomateControl.prepare(args)
 
-        external_dns_resolver = ExternalDnsResolver()
         async with (
             aiohttp.ClientSession() as general_session,
             aiohttp.ClientSession(
                 # Automate messaging server prefers closing connections
                 connector=aiohttp.TCPConnector(force_close=True)) as force_close_session,
-            aiohttp.ClientSession(
-                # Uses external DNS to access Funnel TCP forwarder servers instead of local MagicDNS route
-                connector=aiohttp.TCPConnector(resolver=external_dns_resolver)) as external_dns_session,
             AsyncZeroconf() as zeroconf
         ):
             service_cache = ServiceCache(Cache(Cache.PRIM_SYNC_APP_NAME))
@@ -1385,14 +1388,20 @@ class AutomateControl(Control):
             tailscale = Tailscale(secrets, general_session, _tailscale_tailnet(), _tailscale_secretfile()) if args.tailscale else None
             local_tailscale = LocalTailscale(tailscale, _funnel_local_machine_name_or_none(), LocalTailscaleManager()) if tailscale else None
             remote_tailscale = RemoteTailscale(tailscale, _tailscale_remote_machine_name(), AutomateTailscaleManager(automate)) if tailscale else None
-            funnel = Funnel(tailscale, _funnel_local_machine_name(), _funnel_local_port(), _funnel_local_path(), _funnel_external_port(), external_dns_resolver, local_tailscale) if tailscale and local_tailscale and args.funnel else None
+            funnel = Funnel(tailscale, _funnel_local_machine_name(), _funnel_local_port(), _funnel_local_path(), _funnel_external_port(), local_tailscale) if tailscale and args.funnel and local_tailscale else None
             pftpd_manager = AutomatePftpdManager(automate)
             zeroconf_pftpd = ZeroconfPftpd(args.server_name, service_cache, service_resolver, args.keyfile, pftpd_manager)
             remote_pftpd = RemotePftpd(remote_tailscale.host, _tailscale_sftp_port(), args.server_name, args.keyfile, pftpd_manager) if remote_tailscale else None
 
-            async with Webhooks(Funnel.LOCAL_HOST, funnel.local_port) if funnel else nullcontext() as webhooks:
+            async with (
+                aiohttp.ClientSession(
+                    # Uses external DNS to access Funnel TCP forwarder servers instead of local MagicDNS route
+                    connector=aiohttp.TCPConnector(resolver=funnel.external_public_dns_resolver)
+                    ) if funnel else nullcontext() as external_public_dns_session,
+                Webhooks(Funnel.LOCAL_HOST, funnel.local_port) if funnel else nullcontext() as webhooks
+            ):
                 local = Local(local_tailscale)
-                automate_phone_state = AutomatePhoneState(general_session, external_dns_session, webhooks, automate, funnel, local_tailscale) if local_tailscale and funnel and webhooks else None
+                automate_phone_state = AutomatePhoneState(general_session, external_public_dns_session, webhooks, automate, funnel, local_tailscale) if external_public_dns_session and webhooks and funnel and local_tailscale else None
                 phone = Phone(zeroconf_pftpd, remote_tailscale, remote_pftpd, automate_phone_state)
                 keyboard_interrupt = SignalFence(signal.SIGINT, lambda signum, frame: logger.debug("Keyboard interrupt received, finishing ongoing operations before exit"))
                 control = AutomateControl(args, local, phone, keyboard_interrupt)
