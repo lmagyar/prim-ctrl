@@ -1,6 +1,7 @@
 
 import argparse
 import asyncio
+import signal
 import json
 import logging
 import os
@@ -9,11 +10,13 @@ import socket
 import subprocess
 import sys
 import time
-from abc import abstractmethod
-from contextlib import nullcontext, suppress
-from datetime import datetime, timezone
+from abc import ABC, abstractmethod
+from collections.abc import Awaitable
+from contextlib import contextmanager, nullcontext, suppress
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Callable
+from types import FrameType
+from typing import Callable, Iterator, Optional, Tuple
 
 import aiohttp
 import asyncssh
@@ -23,7 +26,7 @@ import dns.rdatatype
 from aiohttp import ClientTimeout, web
 from aiohttp.abc import AbstractResolver as DnsResolver, ResolveResult
 from platformdirs import user_cache_dir
-from tailscale import Device as TailscaleDeviceInfo, Tailscale as TailscaleApi
+from tailscale import Device as TailscaleDeviceInfo, Tailscale as TailscaleApi, TokenStorage
 from zeroconf import Zeroconf, ServiceInfo, ServiceListener as ZeroconfServiceListener
 from zeroconf.asyncio import AsyncZeroconf
 
@@ -82,11 +85,13 @@ class Logger(logging.Logger):
         super().error(msg, *args, **kwargs)
 
     def critical(self, msg, *args, **kwargs):
-        self.exitcode = 1
+        self.exitcode = 128 + kwargs.pop('signal', 0)
         super().critical(msg, *args, **kwargs)
 
     def log(self, level, msg, *args, **kwargs):
-        if level >= logging.ERROR:
+        if level >= logging.CRITICAL:
+            self.exitcode = 128 + kwargs.pop('signal', 0)
+        elif level >= logging.ERROR:
             self.exitcode = 1
         super().log(level, msg, *args, **kwargs)
 
@@ -105,6 +110,70 @@ class LazyStr:
         return self.result
 
 logger = Logger(Path(sys.argv[0]).name)
+
+########
+
+# based on https://stackoverflow.com/a/71330357/2755656
+class SignalFence():
+    def __init__(self, signum: signal.Signals, on_deferred_signal: Optional[Callable[[int, Optional[FrameType]], None]] = None):
+        self.signum = signum
+        self.on_deferred_signal = on_deferred_signal
+        self.deferred_signal: Optional[Tuple[int, Optional[FrameType]]] = None
+        self.enabled = True
+        self.original_handler = signal.getsignal(signum)
+        if self.original_handler is None:
+            raise TypeError("signal_fence cannot be used with signal handlers that were not installed from Python")
+        if isinstance(self.original_handler, int) and not isinstance(self.original_handler, signal.Handlers):
+            raise NotImplementedError("Your Python interpreter's signal module is using raw integers to represent SIG_IGN and SIG_DFL, which shouldn't be possible!")
+
+    def _handler(self, signum: int, frame: Optional[FrameType]) -> None:
+        if self.deferred_signal is None:
+            self.deferred_signal = (signum, frame)
+        if self.on_deferred_signal is not None:
+            try:
+                self.on_deferred_signal(signum, frame)
+            except:
+                pass
+
+    def disable(self) -> None:
+        if self.enabled:
+            self.enabled = False
+            self.deferred_signal = None
+            logger.debug("Disabling signal %d", self.signum)
+            signal.signal(self.signum, self._handler)
+
+    def enable(self) -> None:
+        if not self.enabled:
+            self.enabled = True
+            logger.debug("Enabling signal %d", self.signum)
+            signal.signal(self.signum, self.original_handler)
+            if (deferred_signal := self.deferred_signal) is not None:
+                self.deferred_signal = None
+                logger.debug("Handling deferred signal %d", self.signum)
+                if isinstance(self.original_handler, signal.Handlers):
+                    if self.original_handler is signal.Handlers.SIG_IGN:
+                        pass
+                    elif self.original_handler is signal.Handlers.SIG_DFL:
+                        signal.signal(self.signum, signal.SIG_DFL)
+                        os.kill(os.getpid(), self.signum)
+                elif callable(self.original_handler):
+                    self.original_handler(*deferred_signal)
+
+    @contextmanager
+    def protect(self) -> Iterator[SignalFence]:
+        try:
+            self.disable()
+            yield self
+        finally:
+            self.enable()
+
+    @contextmanager
+    def unprotect(self) -> Iterator[SignalFence]:
+        try:
+            self.enable()
+            yield self
+        finally:
+            self.disable()
 
 ########
 
@@ -143,12 +212,12 @@ class Subprocess:
         command.extend(args)
         creationflags = subprocess.CREATE_NO_WINDOW if platform.system().lower() == 'windows' else 0
         try:
-            proc = await asyncio.create_subprocess_exec(*command, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, creationflags=creationflags)
+            proc = await asyncio.create_subprocess_exec(*command, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE, creationflags=creationflags)
         except FileNotFoundError as e:
             e.add_note(f"Please check that Tailscale is installed properly")
             raise
-        stdout, _stderr = await proc.communicate()
-        return proc.returncode == 0, stdout
+        stdout, stderr = await proc.communicate()
+        return proc.returncode == 0, stdout.decode(), stderr.decode()
 
 ########
 
@@ -158,12 +227,13 @@ class Subprocess:
 class ExternalDnsResolver(DnsResolver):
     EXTERNAL_DNS = '1.1.1.1'
 
-    def __init__(self):
+    def __init__(self, where: str = EXTERNAL_DNS):
+        self.where = where
         self.dns_resolver = None
         self.cache = dict[tuple[str, int, socket.AddressFamily], tuple[float, list[ResolveResult]]]()
 
     async def resolve(self, host: str, port: int = 0, family: socket.AddressFamily = socket.AF_UNSPEC) -> list[ResolveResult]:
-        logger.debug("Resolving DNS for %s:%i (%s)", host, port, "ipv6" if family == socket.AF_INET6 else "ipv4")
+        logger.debug("Resolving DNS at %s for %s:%i (%s)", self.where, host, port, "ipv6" if family == socket.AF_INET6 else "ipv4")
 
         key = (host, port, family)
         expiration, hosts = self.cache.get(key, (None, None))
@@ -177,11 +247,14 @@ class ExternalDnsResolver(DnsResolver):
 
         try:
             if not self.dns_resolver:
-                self.dns_resolver = await dns.asyncresolver.make_resolver_at(ExternalDnsResolver.EXTERNAL_DNS)
+                self.dns_resolver = await dns.asyncresolver.make_resolver_at(self.where)
             answer = await self.dns_resolver.resolve(host, rdtype=dns.rdatatype.AAAA if family == socket.AF_INET6 else dns.rdatatype.A)
-        except (dns.resolver.NXDOMAIN, dns.resolver.NoAnswer) as exc:
-            msg = exc.args[1] if len(exc.args) >= 1 else "DNS lookup failed"
-            raise OSError(None, msg) from exc
+        except (dns.resolver.NXDOMAIN, dns.resolver.NoAnswer) as e:
+            msg = e.args[1] if len(e.args) >= 1 else "DNS lookup failed"
+            exc = OSError(None, msg)
+            # this is captured in a TaskGroup that drops traceback information from "from e"
+            exc.add_note(repr(e))
+            raise exc from None
 
         hosts = []
         for rr in answer:
@@ -208,7 +281,7 @@ class ExternalDnsResolver(DnsResolver):
 
 ########
 
-class Pingable:
+class Pingable(ABC):
     @abstractmethod
     async def ping(self, availability_hint: bool | None = None) -> bool:
         pass
@@ -230,7 +303,7 @@ class Pingable:
         if not available:
             await asyncio.sleep(1)
 
-class Manager:
+class Manager(ABC):
     @abstractmethod
     async def start(self):
         pass
@@ -392,7 +465,7 @@ class StateSerializer:
             e.add_note("Missing '=' in state")
             raise
 
-class PhoneState:
+class PhoneState(ABC):
     WIFI = 'wifi'
     PFTPD = 'pftpd'
 
@@ -416,9 +489,6 @@ class Secrets:
         self.secrets_path.mkdir(parents=True, exist_ok=True)
         with open(str(self.secrets_path / tokenfile), 'wt') as file:
             file.write(token)
-
-    def get_age(self, tokenfile: str):
-        return (datetime.now(timezone.utc) - datetime.fromtimestamp(os.stat(str(self.secrets_path / tokenfile)).st_mtime, timezone.utc)).total_seconds()
 
 class Cache:
     PRIM_SYNC_APP_NAME = 'prim-sync'
@@ -468,7 +538,7 @@ class ServiceResolver:
             raise TimeoutError("Unable to resolve zeroconf (DNS-SD) service information")
         return (service_info.parsed_addresses()[0], int(service_info.port))
 
-class ServiceListener:
+class ServiceListener(ABC):
     @abstractmethod
     def set_service(self, service_name: str, service_info: ServiceInfo):
         pass
@@ -534,14 +604,17 @@ class ZeroconfService(Service):
         return await self.service_resolver.get(self.service_name, self._resolve_timeout)
 
     async def _ping(self, availability_hint: bool | None = None):
-        logger.debug("Pinging %s (%s - %s:%s)", LazyStr(self.get_class_name), self.service_name, str(self.host), str(self.port))
+        async def __ping(host: str, port: int):
+            logger.debug("Pinging %s (%s - %s:%d)", LazyStr(self.get_class_name), self.service_name, host, port)
+            await self._connect(host, port)
+
         if self.host and self.port:
-            await self._connect(self.host, self.port)
+            await __ping(self.host, self.port)
         else:
             host, port = self.service_cache.get(self.service_name)
             if host and port:
                 try:
-                    await self._connect(host, port)
+                    await __ping(host, port)
                     self.host = host
                     self.port = port
                     return
@@ -551,7 +624,7 @@ class ZeroconfService(Service):
                     else:
                         raise
             host, port = await self._resolve()
-            await self._connect(host, port)
+            await __ping(host, port)
             # if resolution is happened through the ServiceListener, cache is already set, but resolution can happen through request/response also
             self.service_cache.set(self.service_name, host, port)
             self.host = host
@@ -562,13 +635,6 @@ class ZeroconfSshService(ZeroconfService, SshService):
         super().__init__(service_name=service_name, service_cache=service_cache, service_resolver=service_resolver, host_name=service_name, keyfile=keyfile, manager=manager)
 
 ########
-
-class Phone:
-    def __init__(self, zeroconf_sftp: ZeroconfSshService, vpn: Device | None, remote_sftp: SshService | None, state: PhoneState | None):
-        self.zeroconf_sftp = zeroconf_sftp
-        self.vpn = vpn
-        self.remote_sftp = remote_sftp
-        self.state = state
 
 class PftpdServiceListener(ServiceListener):
     def __init__(self, server_name: str, cache: ServiceCache):
@@ -595,61 +661,38 @@ class ZeroconfPftpd(ZeroconfSshService):
         super().__init__(service_name, service_cache, service_resolver, keyfile, manager)
         self.__qualname__ = "pFTPd"
 
-class RemoteTailscale(Device):
-    def __init__(self, tailnet: str, machine_name: str, manager: Manager):
-        super().__init__(f'{machine_name}.{tailnet}', manager)
-        self.tailnet = tailnet
-        self.__qualname__ = "Remote Tailscale"
-
 ########
 
-class Local:
-    def __init__(self, vpn: Manageable | None):
-        self.vpn = vpn
-
-class Tailscale():
+class SecretsTokenStorage(TokenStorage):
     TOKEN_SUFFIX = '.token'
 
-    def __init__(self, secrets: Secrets, session: aiohttp.ClientSession, tailnet: str, secretfile: str):
+    def __init__(self, secrets: Secrets, secretfile: str) -> None:
         self.secrets = secrets
-        self.session = session
-        self.tailnet = tailnet
-        self.secretfile = secretfile
-        self.tailscale_api = None
+        self.tokenfile = secretfile + SecretsTokenStorage.TOKEN_SUFFIX
 
-    async def _start(self):
-        # create new access_token from client_secret if previous access_token is expired or nonexistent
-        tokenfile = self.secretfile + Tailscale.TOKEN_SUFFIX
-        token = None
+    async def get_token(self) -> tuple[str, datetime] | None:
         try:
-            if 3300 > self.secrets.get_age(tokenfile):
-                token = self.secrets.get(tokenfile)
-        except FileNotFoundError:
-            pass
-        if token is None:
-            secret = self.secrets.get(self.secretfile)
-            client_id = secret.split('-')[2]
-            data = {
-                "client_id": client_id,
-                "client_secret": secret,
-                "grant_type": "client_credentials",
-                "scope" : "devices:core:read"
-            }
-            logger.debug("Generating new Tailscale API token")
-            async with self.session.post('https://api.tailscale.com/api/v2/oauth/token', data=data) as response:
-                json_response = await response.json()
-            expires_in = json_response.get('expires_in')
-            token = json_response.get('access_token')
-            assert expires_in is not None and token is not None
-            if expires_in < 3600:
-                raise RuntimeError(f'Tailscale access token received shorter that 1 hour, {expires_in} seconds expiration')
-            self.secrets.set(tokenfile, token)
-        self.tailscale_api = TailscaleApi(session=self.session, request_timeout=30, tailnet=self.tailnet, api_key=token)
+            expires_at, access_token = self.secrets.get(self.tokenfile).split('|', maxsplit=1)
+            return access_token, datetime.strptime(expires_at, "%Y-%m-%d %H:%M:%S%z")
+        except Exception:
+            return None
+
+    async def set_token(self, access_token: str, expires_at: datetime) -> None:
+        try:
+            self.secrets.set(self.tokenfile, expires_at.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M:%S%z") + '|' + access_token)
+        except Exception:
+            return None
+
+class Tailscale():
+    def __init__(self, secrets: Secrets, session: aiohttp.ClientSession, tailnet: str, secretfile: str):
+        self.tailnet = tailnet
+
+        client_secret = secrets.get(secretfile)
+        client_id = client_secret.split('-')[2]
+        self.tailscale_api = TailscaleApi(session=session, request_timeout=30, tailnet=tailnet,
+            oauth_client_id=client_id, oauth_client_secret=client_secret, token_storage=SecretsTokenStorage(secrets, secretfile))
 
     async def device(self, machine_name: str) -> TailscaleDeviceInfo:
-        if not self.tailscale_api:
-            await self._start()
-        assert self.tailscale_api is not None
         logger.debug("Calling Tailscale API for devices")
         devices = await self.tailscale_api.devices()
         name = f"{machine_name}.{self.tailnet}"
@@ -658,25 +701,82 @@ class Tailscale():
                 return device
         raise RuntimeError(f"Device {machine_name} in {self.tailnet} is unknown by Tailscale")
 
+class Funnel(Pingable):
+    LOCAL_HOST = '127.0.0.1'
+
+    def __init__(self, tailscale: Tailscale, machine_name: str, local_port: int, local_path: str, external_port: int, dns_resolver: DnsResolver, local_tailscale: LocalTailscale):
+        self.machine_name = machine_name
+        self.local_port = local_port
+        self.external_name = f'{machine_name}.{tailscale.tailnet}'
+        self.external_port = external_port
+        self.external_url = f'https://{machine_name}.{tailscale.tailnet}:{external_port}{local_path}'
+        self.external_public_dns_resolver = dns_resolver
+        self.local_tailscale = local_tailscale
+        self.external_tailscale_dns_resolver = None
+
+    async def wait_for(self, available: bool, timeout: float):
+        self._sleepcounter = 0
+        await super().wait_for(available, timeout)
+
+    async def ping(self, availability_hint: bool | None = None):
+        logger.debug("Resolving DNS for %s (%s:%s)", LazyStr(self.get_class_name), self.external_name, self.external_port)
+        if self.external_tailscale_dns_resolver is None:
+            self.external_tailscale_dns_resolver = ExternalDnsResolver(await self.local_tailscale.external_dns_resolver())
+        # first try at Tailscale's DNS, if it doesn't know, we should not resolve at a public DNS and cache nxdomain for 5 minutes
+        try:
+            _answer = await self.external_tailscale_dns_resolver.resolve(self.external_name, self.external_port)
+        except Exception as e:
+            logger.debug("Resolving at Tailscale's external DNS has failed: %s", LazyStr(repr, e))
+            return False
+        # then try at a public DNS
+        try:
+            _answer = await self.external_public_dns_resolver.resolve(self.external_name, self.external_port)
+        except Exception as e:
+            logger.debug("Resolving at public external DNS has failed: %s", LazyStr(repr, e))
+            return False
+        return True
+
+    async def _sleep_while_wait(self, available: bool):
+        if self.local_tailscale.is_started_now and 0 != self._sleepcounter and 0 == self._sleepcounter % 3:
+            logger.info("Restarting %s to retrigger public DNS records' configuration at Tailscale...", LazyStr(self.local_tailscale.get_class_name))
+            await self.local_tailscale.stop(10, 30)
+            await self.local_tailscale.start(10, 30)
+        if 0 != self._sleepcounter and 0 == self._sleepcounter % 6:
+            logger.info("Waiting for public DNS records to be updated for %s (%s)...", LazyStr(self.get_class_name), self.external_name)
+        await asyncio.sleep(10)
+        self._sleepcounter += 1
+
 class LocalTailscaleManager(Manager):
     async def start(self):
-        if not (await Subprocess.tailscale(['up']))[0]:
-            raise RuntimeError("Failed to start up local Tailscale")
+        success, _, stderr = await Subprocess.tailscale(['up'])
+        if not success:
+            exc = RuntimeError("Failed to start up local Tailscale")
+            exc.add_note(stderr.rstrip().replace("\n", "; "))
+            raise exc
 
     async def stop(self):
-        if not (await Subprocess.tailscale(['down']))[0]:
-            raise RuntimeError("Failed to shut down local Tailscale")
+        success, _, stderr = await Subprocess.tailscale(['down'])
+        if not success:
+            exc = RuntimeError("Failed to shut down local Tailscale")
+            exc.add_note(stderr.rstrip().replace("\n", "; "))
+            raise exc
 
 class LocalTailscale(Manageable):
-    def __init__(self, tailscale: Tailscale | None = None, machine_name: str | None = None):
-        super().__init__(LocalTailscaleManager())
+    def __init__(self, tailscale: Tailscale, machine_name: str | None, manager: Manager):
+        super().__init__(manager)
         self.tailscale = tailscale
         self.machine_name = machine_name
         self.__qualname__ = "Local Tailscale"
+        self._checked_fresh_start = False
+        self._is_started_now = False
+
+    @property
+    def is_started_now(self) -> bool:
+        return self._is_started_now
 
     async def ping(self, availability_hint: bool | None = None):
         logger.debug("Getting status of %s", LazyStr(self.get_class_name))
-        success, stdout = await Subprocess.tailscale(['status', '--json', '--peers=false', '--self=true'])
+        success, stdout, _ = await Subprocess.tailscale(['status', '--json', '--peers=false', '--self=true'])
         if success:
             status = json.loads(stdout)
         return success and status['BackendState'] == 'Running' and status['Self']['Online']
@@ -685,12 +785,14 @@ class LocalTailscale(Manageable):
         await asyncio.sleep(0.250)
 
     async def start(self, repeat: float, timeout: float):
-        if self.tailscale and self.machine_name:
+        if not self._checked_fresh_start and self.machine_name:
             device_info = await self.tailscale.device(self.machine_name)
         start_result = await super().start(repeat, timeout)
-        if start_result and self.tailscale and self.machine_name:
-            max_last_seen_age = 7200
-            wait_on_fresh_start = 15
+        self._is_started_now = start_result
+        if start_result and not self._checked_fresh_start and self.machine_name:
+            self._checked_fresh_start = True
+            max_last_seen_age = 3600
+            wait_on_fresh_start = 5
             difference = datetime.now(timezone.utc).replace(microsecond=0) - device_info.last_seen if device_info.last_seen else None
             difference_sec = difference.total_seconds() if difference else None
             if difference_sec is None or difference_sec > max_last_seen_age:
@@ -701,34 +803,47 @@ class LocalTailscale(Manageable):
                 await asyncio.sleep(wait_on_fresh_start)
         return start_result
 
-class Funnel(Pingable):
-    LOCAL_HOST = '127.0.0.1'
+    async def external_dns_resolver(self):
+        logger.debug("Getting external DNS resolver of %s for ts.net", LazyStr(self.get_class_name))
+        success, stdout, stderr = await Subprocess.tailscale(['dns', 'status', '--json'])
+        if not success:
+            exc = RuntimeError("Failed to get local DNS status from local Tailscale")
+            exc.add_note(stderr.rstrip().replace("\n", "; "))
+            raise exc
+        status = json.loads(stdout)
+        external_dns_resolver = next(addr['Addr'] for addr in status['SplitDNSRoutes']['ts.net.'] if ':' not in addr['Addr'])
+        return str(external_dns_resolver)
 
-    def __init__(self, tailnet: str, machine_name: str, local_port: int, local_path: str, external_port: int, dns_resolver: DnsResolver):
+class StatSeen(ABC):
+    @abstractmethod
+    async def seen(self, days: int) -> bool:
+        pass
+
+class StatSeenDevice(Device, StatSeen):
+    pass
+
+class RemoteTailscale(StatSeenDevice):
+    def __init__(self, tailscale: Tailscale, machine_name: str, manager: Manager):
+        super().__init__(f'{machine_name}.{tailscale.tailnet}', manager)
+        self.tailscale = tailscale
         self.machine_name = machine_name
-        self.local_port = local_port
-        self.external_name = f'{machine_name}.{tailnet}'
-        self.external_port = external_port
-        self.external_url = f'https://{machine_name}.{tailnet}:{external_port}{local_path}'
-        self.dns_resolver = dns_resolver
-
-    async def wait_for(self, available: bool, timeout: float):
-        self._sleepcounter = 0
-        await super().wait_for(available, timeout)
+        self.__qualname__ = "Remote Tailscale"
 
     async def ping(self, availability_hint: bool | None = None):
-        logger.debug("Resolving DNS for %s (%s)", LazyStr(self.get_class_name), self.external_name)
-        try:
-            _answer = await self.dns_resolver.resolve(self.external_name, self.external_port)
-        except Exception:
-            return False
-        return True
+        logger.debug("Pinging %s (%s)", LazyStr(self.get_class_name), self.host)
+        # network ping not always works when the device is online, use tailscale ping instead
+        success, stdout, stderr = await Subprocess.tailscale(['ping', '--c', '1', '--timeout', '2s', self.host])
+        return success or stderr.rstrip() == "direct connection not established" and stdout.startswith(f"pong from {self.machine_name}")
 
-    async def _sleep_while_wait(self, available: bool):
-        if 0 != self._sleepcounter and 0 == self._sleepcounter % 6:
-            logger.info("Waiting for public DNS records to be updated for %s (%s)...", LazyStr(self.get_class_name), self.external_name)
-        await asyncio.sleep(10)
-        self._sleepcounter += 1
+    async def seen(self, days: int) -> bool:
+        device_info = await self.tailscale.device(self.machine_name)
+        logger.debug("%s connected: %s, last seen: %s", LazyStr(self.get_class_name), device_info.connected_to_control, device_info.last_seen)
+        if device_info.connected_to_control:
+            return True
+        if not device_info.last_seen or days == 0:
+            return False
+        difference = datetime.now(timezone.utc).replace(microsecond=0) - device_info.last_seen
+        return difference < timedelta(days=days)
 
 ########
 
@@ -838,11 +953,9 @@ class AutomateTailscaleManager(Manager):
         await self.automate.send_message('stop-tailscale')
 
 class WebhookPing(Pingable):
-    def __init__(self, session: aiohttp.ClientSession, webhooks: Webhooks, funnel: Funnel):
+    def __init__(self, session: aiohttp.ClientSession, funnel: Funnel):
         self.session = session
-        self.webhooks = webhooks
-        self.funnel = funnel
-        self.ping_url = f'{self.funnel.external_url}{Webhooks.get_ping_path()}'
+        self.ping_url = f'{funnel.external_url}{Webhooks.get_ping_path()}'
         self.__qualname__ = "Webhooks"
 
     async def wait_for(self, available: bool, timeout: float):
@@ -863,15 +976,27 @@ class WebhookPing(Pingable):
         await asyncio.sleep(1)
         self._sleepcounter += 1
 
+class ExternalWebhookPing(WebhookPing):
+    def __init__(self, session: aiohttp.ClientSession, funnel: Funnel, local_tailscale: LocalTailscale):
+        super().__init__(session, funnel)
+        self.local_tailscale = local_tailscale
+
+    async def _sleep_while_wait(self, available: bool):
+        if self.local_tailscale.is_started_now and 0 != self._sleepcounter and 0 == self._sleepcounter % 15:
+            logger.info("Restarting %s to retrigger Funnel TCP forwarders' configuration at Tailscale...", LazyStr(self.local_tailscale.get_class_name))
+            await self.local_tailscale.stop(10, 30)
+            await self.local_tailscale.start(10, 30)
+        await super()._sleep_while_wait(available)
+
 class AutomatePhoneState(PhoneState):
     VARIABLE_STATE = 'state'
 
-    def __init__(self, general_session: aiohttp.ClientSession, external_dns_session: aiohttp.ClientSession, webhooks: Webhooks, automate: Automate, funnel: Funnel):
+    def __init__(self, general_session: aiohttp.ClientSession, external_dns_session: aiohttp.ClientSession, webhooks: Webhooks, automate: Automate, funnel: Funnel, local_tailscale: LocalTailscale):
         self.webhooks = webhooks
         self.automate = automate
         self.funnel = funnel
-        self.local_webhook_ping = WebhookPing(general_session, webhooks, funnel)
-        self.external_webhook_ping = WebhookPing(external_dns_session, webhooks, funnel)
+        self.local_webhook_ping = WebhookPing(general_session, funnel)
+        self.external_webhook_ping = ExternalWebhookPing(external_dns_session, funnel, local_tailscale)
 
     async def get(self, repeat: float, timeout: float):
         logger.info("Getting Phone state...")
@@ -883,7 +1008,10 @@ class AutomatePhoneState(PhoneState):
         try:
             await self.local_webhook_ping.wait_for(True, test_timeout)
         except Exception as e:
-            raise RuntimeError(f"Local Funnel is not configured properly for {self.funnel.external_url}") from e
+            exc = RuntimeError(f"Local Funnel is not configured properly for {self.funnel.external_url}")
+            # this is captured in a TaskGroup that drops traceback information from "from e"
+            exc.add_note(repr(e))
+            raise exc from None
 
         # test funnel's DNS resolvability, if local Tailscale is freshly started up after longer down state, it can take up to 10 minutes for public DNS records to get updated
         test_timeout = 600.0
@@ -891,16 +1019,22 @@ class AutomatePhoneState(PhoneState):
         try:
             await self.funnel.wait_for(True, test_timeout)
         except Exception as e:
-            raise RuntimeError(f"Funnel's DNS is not configured by Tailscale for {self.funnel.external_name}") from e
+            exc = RuntimeError(f"Funnel's DNS is not configured by Tailscale for {self.funnel.external_name}")
+            # this is captured in a TaskGroup that drops traceback information from "from e"
+            exc.add_note(repr(e))
+            raise exc from None
 
         # test external funnel + webhooks availability, ie. test funnel tcp forwarders
         # it will NOT be routed locally, so the route is equivalent with / similar to what Automate will see
-        test_timeout = 300.0
+        test_timeout = 120.0
         logger.debug("Testing Funnel with calling external webhook (timeout is %ds)", int(test_timeout))
         try:
             await self.external_webhook_ping.wait_for(True, test_timeout)
         except Exception as e:
-            raise RuntimeError(f"Funnel TCP forwarders are not configured by Tailscale for {self.funnel.external_name}") from e
+            exc = RuntimeError(f"Funnel TCP forwarders are not configured by Tailscale for {self.funnel.external_name}")
+            # this is captured in a TaskGroup that drops traceback information from "from e"
+            exc.add_note(repr(e))
+            raise exc from None
 
         # get state
         logger.debug("Getting Phone state (repeat after %ds, timeout is %ds)", int(repeat), int(timeout))
@@ -926,7 +1060,7 @@ class AutomatePhoneState(PhoneState):
 ########
 
 class WideHelpFormatter(argparse.RawTextHelpFormatter):
-    def __init__(self, prog: str, indent_increment: int = 2, max_help_position: int = 35, width: int | None = None) -> None:
+    def __init__(self, prog: str, indent_increment: int = 2, max_help_position: int = 34, width: int | None = None) -> None:
         super().__init__(prog, indent_increment, max_help_position, width)
 
 async def gather_with_taskgroup(*coros):
@@ -935,7 +1069,23 @@ async def gather_with_taskgroup(*coros):
             tasks = [tg.create_task(coro) for coro in coros]
         return tuple([task.result() for task in tasks])
     except ExceptionGroup as eg:
-        raise eg.exceptions[0] from (None if len(eg.exceptions) == 1 else eg)
+        exc = eg.exceptions[0]
+        # this can be captured in another TaskGroup that drops traceback information from "from e"
+        if len(eg.exceptions) > 1:
+            for e in eg.exceptions[1:]:
+                exc.add_note(repr(e))
+        raise exc from None
+
+class Local:
+    def __init__(self, vpn: Manageable | None):
+        self.vpn = vpn
+
+class Phone:
+    def __init__(self, zeroconf_sftp: ZeroconfSshService, vpn: StatSeenDevice | None, remote_sftp: SshService | None, state: PhoneState | None):
+        self.zeroconf_sftp = zeroconf_sftp
+        self.vpn = vpn
+        self.remote_sftp = remote_sftp
+        self.state = state
 
 class Control:
     PHONE_WIFI = 'remote-wifi'
@@ -969,11 +1119,8 @@ class Control:
         vpn_group.add_argument('-b', '--backup-state', help="in case of start, backup current state to stdout as single string (in case of an error, it will try to restore the original state but will not write it to stdout)", default=False, action='store_true')
         vpn_group.add_argument('-r', '--restore-state', metavar="STATE", help="in case of stop, restore previous state from STATE (use -b to get a valid STATE string)", action='store')
 
-    @abstractmethod
-    async def run(self, args):
-        pass
-
-    def prepare(self, args):
+    @staticmethod
+    def prepare(args: argparse.Namespace):
         if args.debug:
             logger.setLevel(logging.DEBUG)
         logger.prepare(args.timestamp or args.debug, args.silent)
@@ -985,132 +1132,149 @@ class Control:
         if args.restore_state and args.intent != 'stop':
             raise ValueError("The --restore-state option can be enabled only for the stop intent")
 
-    async def execute(self, args, local: Local, phone: Phone):
-        async def _stop(restore_state: dict | None, stop_only_started: bool = False):
+    def __init__(self, args: argparse.Namespace, local: Local, phone: Phone, keyboard_interrupt: SignalFence):
+        self.args = args
+        self.local = local
+        self.phone = phone
+        self.keyboard_interrupt = keyboard_interrupt
+
+    async def _stop(self, restore_state: dict | None, stop_only_started: bool = False):
+        with self.keyboard_interrupt.protect():
             async def _suppress(coro, default: bool):
                 try:
                     return await coro
                 except:
                     return default
-            if local.vpn and phone.vpn and phone.remote_sftp and await _suppress(local.vpn.test(), True) and await _suppress(phone.vpn.test(), True):
-                if (restore_state is None or not restore_state.get(Control.PHONE_SFTP, stop_only_started)) and await _suppress(phone.remote_sftp.test(), True):
+            if self.local.vpn and self.phone.vpn and self.phone.remote_sftp and await _suppress(self.local.vpn.test(), True) and await _suppress(self.phone.vpn.test(), True):
+                if (restore_state is None or not restore_state.get(Control.PHONE_SFTP, stop_only_started)) and await _suppress(self.phone.remote_sftp.test(), True):
                     try:
-                        await phone.remote_sftp.stop(10, 30)
+                        await self.phone.remote_sftp.stop(10, 30)
                     except Exception as e:
                         logger.exception_or_error(e)
                 if restore_state is None or not restore_state.get(Control.PHONE_VPN, stop_only_started):
                     try:
-                        await phone.vpn.stop(10, 60)
+                        await self.phone.vpn.stop(10, 60)
                     except Exception as e:
                         logger.exception_or_error(e)
             else:
                 if (restore_state is None or not restore_state.get(Control.PHONE_SFTP, stop_only_started)):
                     try:
-                        await phone.zeroconf_sftp.stop(10, 30)
+                        await self.phone.zeroconf_sftp.stop(10, 30)
                     except Exception as e:
                         logger.exception_or_error(e)
-            if local.vpn:
+            if self.local.vpn:
                 if restore_state is None or not restore_state.get(Control.LOCAL_VPN, stop_only_started):
                     try:
-                        await local.vpn.stop(10, 30)
+                        await self.local.vpn.stop(10, 30)
                     except Exception as e:
                         logger.exception_or_error(e)
-        match args.intent:
+
+    async def run(self):
+        match self.args.intent:
             case 'test':
-                if local.vpn and phone.vpn and phone.remote_sftp and phone.state:
-                    if await local.vpn.test():
-                        phone_state, _vpn_state = await gather_with_taskgroup(phone.state.get(10, 30), phone.vpn.test())
-                elif local.vpn and phone.vpn and phone.remote_sftp and await local.vpn.test() and await phone.vpn.test():
-                    await phone.remote_sftp.test()
+                if self.local.vpn and self.phone.vpn and self.phone.remote_sftp and self.phone.state:
+                    if await self.local.vpn.test():
+                        phone_state, _vpn_state = await gather_with_taskgroup(self.phone.state.get(10, 30), self.phone.vpn.test())
+                elif self.local.vpn and self.phone.vpn and self.phone.remote_sftp and await self.local.vpn.test() and await self.phone.vpn.test():
+                    await self.phone.remote_sftp.test()
                 else:
-                    await phone.zeroconf_sftp.test()
+                    await self.phone.zeroconf_sftp.test()
             case 'start':
-                if local.vpn and phone.vpn and phone.remote_sftp:
+                if self.local.vpn and self.phone.vpn and self.phone.remote_sftp:
                     state = dict()
                     try:
                         # gather local state info
-                        local_vpn_state = await local.vpn.test()
+                        local_vpn_state = await self.local.vpn.test()
                         state[Control.LOCAL_VPN] = local_vpn_state
 
                         # start changing local state - we need a local vpn to be able to access the state of the remote vpn and optionally the phone
                         if not state[Control.LOCAL_VPN]:
-                            await local.vpn.start(10, 30)
+                            await self.local.vpn.start(10, 30)
 
                         zeroconf_accessible = False
                         remote_accessible = False
 
                         # gather phone state info
-                        if phone.state:
-                            phone_state, phone_vpn_state = await gather_with_taskgroup(phone.state.get(10, 30), phone.vpn.test())
+                        if self.phone.state:
+                            phone_state, phone_vpn_state = await gather_with_taskgroup(self.phone.state.get(10, 30), self.phone.vpn.test())
                             state[Control.PHONE_WIFI] = phone_state[PhoneState.WIFI]
                             state[Control.PHONE_VPN] = phone_vpn_state
                             state[Control.PHONE_SFTP] = phone_state[PhoneState.PFTPD]
-                            if not state[Control.PHONE_WIFI] and not args.accept_cellular:
+                            if not state[Control.PHONE_WIFI] and not self.args.accept_cellular:
                                 raise RuntimeError(f"Phone is not on Wi-Fi network")
                         else:
-                            state[Control.PHONE_VPN] = await phone.vpn.test()
-                            if state[Control.PHONE_VPN]:
-                                state[Control.PHONE_SFTP] = remote_accessible = await phone.remote_sftp.test()
-
+                            state[Control.PHONE_VPN] = phone_vpn_state = await self.phone.vpn.test()
+                            if phone_vpn_state:
+                                state[Control.PHONE_SFTP] = remote_accessible = await self.phone.remote_sftp.test()
                         # start changing phone state
-                        if phone.state:
+                        phone_vpn = state[Control.PHONE_VPN]
+                        if not phone_vpn and self.args.restart_vpn is not None and not await self.phone.vpn.seen(self.args.restart_vpn):
+                            logger.info("%s wasn't seen for %d days", LazyStr(self.phone.vpn.get_class_name), self.args.restart_vpn)
+                            phone_vpn = await self.phone.vpn.start(10, 60)
+                            if not self.phone.state:
+                                state[Control.PHONE_SFTP] = remote_accessible = await self.phone.remote_sftp.test()
+                        if self.phone.state:
                             if not state[Control.PHONE_SFTP]:
-                                if not state[Control.PHONE_VPN]:
+                                if not phone_vpn:
                                     if state[Control.PHONE_WIFI]:
                                         try:
-                                            zeroconf_accessible = await phone.zeroconf_sftp.start(10, 30)
+                                            zeroconf_accessible = await self.phone.zeroconf_sftp.start(10, 30)
                                         except TimeoutError:
-                                            await phone.vpn.start(10, 60)
-                                            remote_accessible = await phone.remote_sftp.test()
+                                            await self.phone.vpn.start(10, 60)
+                                            remote_accessible = await self.phone.remote_sftp.test()
                                     else:
-                                        await phone.vpn.start(10, 60)
-                                        remote_accessible = await phone.remote_sftp.start(10, 30)
+                                        await self.phone.vpn.start(10, 60)
+                                        remote_accessible = await self.phone.remote_sftp.start(10, 30)
                                 else:
-                                    remote_accessible = await phone.remote_sftp.start(10, 30)
+                                    remote_accessible = await self.phone.remote_sftp.start(10, 30)
                                     if state[Control.PHONE_WIFI]:
-                                        zeroconf_accessible = await phone.zeroconf_sftp.test()
+                                        zeroconf_accessible = await self.phone.zeroconf_sftp.test()
                             else:
-                                if not state[Control.PHONE_VPN]:
-                                    if not state[Control.PHONE_WIFI] or not (zeroconf_accessible := await phone.zeroconf_sftp.test()):
-                                        await phone.vpn.start(10, 60)
-                                        remote_accessible = await phone.remote_sftp.test()
+                                if not phone_vpn:
+                                    if not state[Control.PHONE_WIFI] or not (zeroconf_accessible := await self.phone.zeroconf_sftp.test()):
+                                        await self.phone.vpn.start(10, 60)
+                                        remote_accessible = await self.phone.remote_sftp.test()
                                 else:
-                                    zeroconf_accessible, remote_accessible = await gather_with_taskgroup(phone.zeroconf_sftp.test(), phone.remote_sftp.test())
+                                    zeroconf_accessible, remote_accessible = await gather_with_taskgroup(self.phone.zeroconf_sftp.test(), self.phone.remote_sftp.test())
                         else:
-                            if not state[Control.PHONE_VPN]:
-                                if not (zeroconf_accessible := await phone.zeroconf_sftp.test()):
+                            if not phone_vpn:
+                                if not (zeroconf_accessible := await self.phone.zeroconf_sftp.test()):
                                     try:
-                                        zeroconf_accessible = await phone.zeroconf_sftp.start(10, 30)
+                                        zeroconf_accessible = await self.phone.zeroconf_sftp.start(10, 30)
                                     except TimeoutError:
-                                        await phone.vpn.start(10, 60)
-                                        remote_accessible = await phone.remote_sftp.test()
+                                        await self.phone.vpn.start(10, 60)
+                                        remote_accessible = await self.phone.remote_sftp.test()
                             else:
                                 if not state[Control.PHONE_SFTP]:
-                                    remote_accessible = await phone.remote_sftp.start(10, 30)
-                                zeroconf_accessible = await phone.zeroconf_sftp.test()
+                                    remote_accessible = await self.phone.remote_sftp.start(10, 30)
+                                zeroconf_accessible = await self.phone.zeroconf_sftp.test()
                         if not zeroconf_accessible and not remote_accessible:
-                            raise RuntimeError(f"Even when {phone.vpn.get_class_name()} and {phone.remote_sftp.get_class_name()} is started, {phone.remote_sftp.get_class_name()} is still not accessible")
-
+                            raise RuntimeError(f"Even when {self.phone.vpn.get_class_name()} and {self.phone.remote_sftp.get_class_name()} is started, {self.phone.remote_sftp.get_class_name()} is still not accessible")
                         # print out result on stdout
-                        if not args.backup_state:
+                        if not self.args.backup_state:
                             state = dict()
                         state[Control.CONNECTED] = Control.ZEROCONF if zeroconf_accessible else Control.REMOTE
                         print(StateSerializer.dumps(state))
-                    except Exception:
+                    except:
                         try:
-                            await _stop(state, stop_only_started = True)
+                            logger.info("Due to error, restoring local and remote state...")
+                            await self._stop(state, stop_only_started = True)
                         except Exception as e:
                             logger.exception_or_error(e)
                         raise
                 else:
                     try:
-                        if not await phone.zeroconf_sftp.test():
-                            await phone.zeroconf_sftp.start(10, 30)
-                    except Exception:
-                        await _stop(None)
+                        if not await self.phone.zeroconf_sftp.test():
+                            await self.phone.zeroconf_sftp.start(10, 30)
+                    except:
+                        try:
+                            logger.info("Due to error, restoring local and remote state...")
+                            await self._stop(None)
+                        except Exception as e:
+                            logger.exception_or_error(e)
                         raise
             case 'stop':
-                await _stop(StateSerializer.loads(args.restore_state) if args.restore_state else None)
+                await self._stop(StateSerializer.loads(self.args.restore_state) if self.args.restore_state else None)
 
 class AutomateControl(Control):
     @staticmethod
@@ -1140,29 +1304,33 @@ class AutomateControl(Control):
             description="To use --tailscale option you must install Tailscale and configure Tailscale VPN on your phone and your laptop\n"
                 "To use --funnel option you must configure Tailscale Funnel on your laptop for prim-ctrl's local webhook to accept responses from the Automate app\n"
                 "   (eg.: tailscale funnel --bg --https=8443 --set-path=/prim-ctrl \"http://127.0.0.1:12345\")\n"
-                "Note: --funnel, --backup-state and --restore-state options can be used only when --tailscale is used\n"
+                "Note: --funnel, --restart-vpn, --backup-state and --restore-state options can be used only when --tailscale is used\n"
                 "Note: --backup-state is accurate only, when --funnel is used\n"
                 "Note: --accept-cellular option can be used only when --funnel is used")
-        vpn_group.add_argument('--tailscale', nargs=3, metavar=('tailnet', 'remote-machine-name', 'sftp-port'), help=
+        vpn_group.add_argument('--tailscale', nargs=4, metavar=('tailnet', 'secretfile', 'remote-machine-name', 'sftp-port'), help=
             "tailnet:             your Tailscale tailnet name (eg. tailxxxx.ts.net)\n"
+            "secretfile:          filename containing Tailscale's Client secret (not API access token, not Auth key) that located under your .secrets folder\n"
+            "                     (generated on https://login.tailscale.com/admin/settings/trust-credentials, with 'devices:core:read' scope,\n"
+            "                     save only the Client secret in the file, the Client ID is part of it)\n"
             "remote-machine-name: your phone's name within your tailnet (just the name, without the tailnet)\n"
             "sftp-port:           Primitive FTPd's sftp port")
-        vpn_group.add_argument('--funnel', nargs=5, metavar=('local-machine-name', 'local-port', 'local-path', 'external-port', 'secretfile'), help=
+        vpn_group.add_argument('--funnel', nargs=4, metavar=('local-machine-name', 'local-port', 'local-path', 'external-port'), help=
             "local-machine-name:  your laptop's name within your tailnet (just the name, without the tailnet)\n"
             "local-port:          12345 - if you used the example tailscale funnel command above (the local webhook will be started on this port)\n"
             "local-path:          /prim-ctrl - if you used the example tailscale funnel command above\n"
-            "external-port:       8443 - if you used the example tailscale funnel command above\n"
-            "secretfile:          filename containing Tailscale's Client secret (not API access token, not Auth key) that located under your .secrets folder\n"
-            "                     (generated on https://login.tailscale.com/admin/settings/oauth, with 'devices:core:read' scope,\n"
-            "                     save only the Client secret in the file, the Client ID is part of it)")
+            "external-port:       8443 - if you used the example tailscale funnel command above")
+        vpn_group.add_argument('-rv', '--restart-vpn', metavar="DAYS", help="in case of start, even if connected locally, but VPN is not used in the past DAYS, start VPN up", type=int, default=None, action='store')
         Control.setup_parser_vpngroup(vpn_group)
 
-        parser.set_defaults(ctor=AutomateControl)
+        parser.set_defaults(runner=AutomateControl.runner)
 
-    def prepare(self, args):
-        super().prepare(args)
+    @staticmethod
+    def prepare(args: argparse.Namespace):
+        Control.prepare(args)
         if args.funnel and not args.tailscale:
             raise ValueError("--funnel option can be used only when --tailscale is used")
+        if args.restart_vpn and not args.tailscale:
+            raise ValueError("--restart-vpn option can be used only when --tailscale is used")
         if args.backup_state and not args.tailscale:
             raise ValueError("--backup-state option can be used only when --tailscale is used")
         if args.restore_state and not args.tailscale:
@@ -1170,8 +1338,9 @@ class AutomateControl(Control):
         if args.accept_cellular and not args.funnel:
             raise ValueError("--accept-cellular option can be used only when --funnel is used")
 
-    async def run(self, args):
-        self.prepare(args)
+    @staticmethod
+    async def runner(args: argparse.Namespace) -> None:
+        AutomateControl.prepare(args)
 
         external_dns_resolver = ExternalDnsResolver()
         async with (
@@ -1180,7 +1349,7 @@ class AutomateControl(Control):
                 # Automate messaging server prefers closing connections
                 connector=aiohttp.TCPConnector(force_close=True)) as force_close_session,
             aiohttp.ClientSession(
-                # Uses external DNS to access Funnet TCP forwarder servers instead of local MagicDNS route
+                # Uses external DNS to access Funnel TCP forwarder servers instead of local MagicDNS route
                 connector=aiohttp.TCPConnector(resolver=external_dns_resolver)) as external_dns_session,
             AsyncZeroconf() as zeroconf
         ):
@@ -1191,43 +1360,76 @@ class AutomateControl(Control):
             service_browser = SftpServiceBrowser(zeroconf)
             await service_browser.add_service_listener(service_listener)
 
+            def _tailscale_tailnet():
+                return args.tailscale[0]
+            def _tailscale_secretfile():
+                return args.tailscale[1]
+            def _tailscale_remote_machine_name():
+                return args.tailscale[2]
+            def _tailscale_sftp_port():
+                return int(args.tailscale[3])
+
+            def _funnel_local_machine_name_or_none():
+                return args.funnel[0] if args.funnel else None
+            def _funnel_local_machine_name():
+                return args.funnel[0]
+            def _funnel_local_port():
+                return int(args.funnel[1])
+            def _funnel_local_path():
+                return args.funnel[2]
+            def _funnel_external_port():
+                return int(args.funnel[3])
+
             secrets = Secrets()
             automate = Automate(secrets, force_close_session, args.automate_account, args.automate_device, args.automate_tokenfile)
-            remote_tailscale = RemoteTailscale(args.tailscale[0], args.tailscale[1], AutomateTailscaleManager(automate)) if args.tailscale else None
+            tailscale = Tailscale(secrets, general_session, _tailscale_tailnet(), _tailscale_secretfile()) if args.tailscale else None
+            local_tailscale = LocalTailscale(tailscale, _funnel_local_machine_name_or_none(), LocalTailscaleManager()) if tailscale else None
+            remote_tailscale = RemoteTailscale(tailscale, _tailscale_remote_machine_name(), AutomateTailscaleManager(automate)) if tailscale else None
+            funnel = Funnel(tailscale, _funnel_local_machine_name(), _funnel_local_port(), _funnel_local_path(), _funnel_external_port(), external_dns_resolver, local_tailscale) if tailscale and local_tailscale and args.funnel else None
             pftpd_manager = AutomatePftpdManager(automate)
             zeroconf_pftpd = ZeroconfPftpd(args.server_name, service_cache, service_resolver, args.keyfile, pftpd_manager)
-            remote_pftpd = RemotePftpd(remote_tailscale.host, int(args.tailscale[2]), args.server_name, args.keyfile, pftpd_manager) if remote_tailscale else None
-            funnel = Funnel(remote_tailscale.tailnet, args.funnel[0], int(args.funnel[1]), args.funnel[2], int(args.funnel[3]), external_dns_resolver) if remote_tailscale and args.funnel else None
-            local_tailscale = (
-                LocalTailscale(Tailscale(secrets, general_session, remote_tailscale.tailnet, args.funnel[4]), funnel.machine_name) if remote_tailscale and funnel else
-                LocalTailscale() if args.tailscale else
-                None)
+            remote_pftpd = RemotePftpd(remote_tailscale.host, _tailscale_sftp_port(), args.server_name, args.keyfile, pftpd_manager) if remote_tailscale else None
 
             async with Webhooks(Funnel.LOCAL_HOST, funnel.local_port) if funnel else nullcontext() as webhooks:
                 local = Local(local_tailscale)
-                automate_phone_state = AutomatePhoneState(general_session, external_dns_session, webhooks, automate, funnel) if funnel and webhooks else None
+                automate_phone_state = AutomatePhoneState(general_session, external_dns_session, webhooks, automate, funnel, local_tailscale) if local_tailscale and funnel and webhooks else None
                 phone = Phone(zeroconf_pftpd, remote_tailscale, remote_pftpd, automate_phone_state)
-                await self.execute(args, local, phone)
+                keyboard_interrupt = SignalFence(signal.SIGINT, lambda signum, frame: logger.debug("Keyboard interrupt received, finishing ongoing operations before exit"))
+                control = AutomateControl(args, local, phone, keyboard_interrupt)
+                await control.run()
 
-async def main():
+async def async_main():
     args = None
+    parser = argparse.ArgumentParser(
+        description="Remote control of your phone's Primitive FTPd and optionally Tailscale app statuses via the Automate app, for more details see https://github.com/lmagyar/prim-ctrl",
+        formatter_class=WideHelpFormatter)
+    subparsers = parser.add_subparsers(required=True,
+        title="Phone app to use for control")
+
+    AutomateControl.setup_subparser(subparsers)
+
+    args = parser.parse_args()
+    runner: Callable[[argparse.Namespace], Awaitable[None]] = args.runner
+    await runner(args)
+
+def main():
     try:
-        parser = argparse.ArgumentParser(
-            description="Remote control of your phone's Primitive FTPd and optionally Tailscale app statuses via the Automate app, for more details see https://github.com/lmagyar/prim-ctrl",
-            formatter_class=WideHelpFormatter)
-        subparsers = parser.add_subparsers(required=True,
-            title="Phone app to use for control")
-
-        AutomateControl.setup_subparser(subparsers)
-
-        args = parser.parse_args()
-        await args.ctor().run(args)
+        asyncio.run(async_main())
 
     except Exception as e:
         logger.exception_or_error(e)
 
+    except KeyboardInterrupt:
+        logger.critical("Interrupted by user", signal=signal.SIGINT)
+
     return logger.exitcode
 
 def run():
-    with suppress(KeyboardInterrupt):
-        exit(asyncio.run(main()))
+    try:
+        sys.exit(main())
+    finally:
+        # Windows: suppress stderr during interpreter shutdown to silence asyncio
+        # transport __del__ exceptions (ValueError from closed pipes).
+        # This must happen after main() returns but before Python garbage collects.
+        if sys.platform == "win32":
+            sys.stderr = open(os.devnull, "w")

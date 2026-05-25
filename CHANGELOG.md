@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.8.0
+
+- Win: Suppress asyncio transport \_\_del\_\_ exceptions (ValueError from closed pipes) during interpreter shutdown
+- Use Tailscale's own DNS before querying the public DNS
+- Decrease last-seen limit and decrease wait time after fresh new local Tailscale startup
+- Add original exception to exception notes instead of using traceback context
+- Add stderr to exception notes in case of tailscale up/down
+- Drop tailscale-fixed package in favour of the updated tailscale package
+- Log when due to exception, local and remote state restore starts
+- Properly handle KeyboardInterrupt in case of asyncio
+- Update tailscale-fixed for built-in OAuth support
+- Restart local tailscale while waiting for funnel DNS records to be set up
+- Add --restart-vpn option
+- Restart local tailscale while waiting for funnel TCP forwarders to be set up
+- Breaking: move secretfile argument from funnel to tailscale option
+- Protect against Ctrl-C/KeyboardInterrupt in critical steps
+- Ctrl-C/KeyboardInterrupt results in exit code 130
+- Use tailscale ping instead of normal ping
+- Update dependencies
+
 ## 0.7.13
 
 - Replace tailscale with tailscale-fixed package
