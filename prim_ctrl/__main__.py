@@ -250,7 +250,7 @@ class ExternalDnsResolver(DnsResolver):
                 self.dns_resolver = await dns.asyncresolver.make_resolver_at(self.where)
             answer = await self.dns_resolver.resolve(host, rdtype=dns.rdatatype.AAAA if family == socket.AF_INET6 else dns.rdatatype.A)
         except (dns.resolver.NXDOMAIN, dns.resolver.NoAnswer) as e:
-            msg = e.args[1] if len(e.args) >= 1 else "DNS lookup failed"
+            msg = '; '.join(e.args) if len(e.args) else "DNS lookup failed"
             exc = OSError(None, msg)
             # this is captured in a TaskGroup that drops traceback information from "from e"
             exc.add_note(repr(e))
