@@ -428,7 +428,7 @@ class SshService(Service):
                 client_keys=_client_key(),
                 connect_timeout=self._connect_timeout))
         ):
-            pass # NOSONAR(S108)
+            return
 
 class Device(Manageable):
     def __init__(self, host: str, manager: Manager):
