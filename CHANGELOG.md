@@ -3,6 +3,7 @@
 ## vNext
 
 - Use original OS DNS resolver instead of hard wired 1.1.1.1
+- Increase last-seen limit
 
 ## 0.8.0
 

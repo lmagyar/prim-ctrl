@@ -791,7 +791,7 @@ class LocalTailscale(Manageable):
         self._is_started_now = start_result
         if start_result and not self._checked_fresh_start and self.machine_name:
             self._checked_fresh_start = True
-            max_last_seen_age = 3600
+            max_last_seen_age = 7200
             wait_on_fresh_start = 5
             difference = datetime.now(timezone.utc).replace(microsecond=0) - device_info.last_seen if device_info.last_seen else None
             difference_sec = difference.total_seconds() if difference else None
