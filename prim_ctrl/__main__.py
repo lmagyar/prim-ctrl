@@ -37,7 +37,7 @@ class LevelFormatter(logging.Formatter):
 
     def __init__(self, fmts: dict[int, str], fmt: str, **kwargs):
         super().__init__()
-        self.formatters = dict({level: logging.Formatter(fmt, **kwargs) for level, fmt in fmts.items()})
+        self.formatters = {level: logging.Formatter(fmt, **kwargs) for level, fmt in fmts.items()}
         self.default_formatter = logging.Formatter(fmt, **kwargs)
 
     def format(self, record: logging.LogRecord) -> str:
@@ -132,7 +132,7 @@ class SignalFence():
         if self.on_deferred_signal is not None:
             try:
                 self.on_deferred_signal(signum, frame)
-            except:
+            except: # NOSONAR(S5754)
                 pass
 
     def disable(self) -> None:
@@ -151,11 +151,11 @@ class SignalFence():
                 self.deferred_signal = None
                 logger.debug("Handling deferred signal %d", self.signum)
                 if isinstance(self.original_handler, signal.Handlers):
-                    if self.original_handler is signal.Handlers.SIG_IGN:
-                        pass
-                    elif self.original_handler is signal.Handlers.SIG_DFL:
+                    if self.original_handler == signal.Handlers.SIG_DFL:
                         signal.signal(self.signum, signal.SIG_DFL)
                         os.kill(os.getpid(), self.signum)
+                    # elif self.original_handler == signal.Handlers.SIG_IGN:
+                    #     pass
                 elif callable(self.original_handler):
                     self.original_handler(*deferred_signal)
 
@@ -193,7 +193,7 @@ class Subprocess:
     #         return result.returncode == 0
 
     @staticmethod
-    async def ping(host, packets: int = 1, timeout: float = 1):
+    async def ping(host, packets: int = 1, timeout: float = 1): # NOSONAR(S7483)
         if platform.system().lower() == 'windows':
             command = ['ping', '-n', str(packets), '-w', str(int(timeout*1000)), host]
             # don't use text=True, the async version will raise ValueError("text must be False"), who knows why
@@ -214,7 +214,7 @@ class Subprocess:
         try:
             proc = await asyncio.create_subprocess_exec(*command, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE, creationflags=creationflags)
         except FileNotFoundError as e:
-            e.add_note(f"Please check that Tailscale is installed properly")
+            e.add_note("Please check that Tailscale is installed properly")
             raise
         stdout, stderr = await proc.communicate()
         return proc.returncode == 0, stdout.decode(), stderr.decode()
@@ -228,7 +228,7 @@ class ExternalDnsResolver(DnsResolver):
     def __init__(self, where: str):
         self.where = where
         self.dns_resolver = None
-        self.cache = dict[tuple[str, int, socket.AddressFamily], tuple[float, list[ResolveResult]]]()
+        self.cache: dict[tuple[str, int, socket.AddressFamily], tuple[float, list[ResolveResult]]] = {}
 
     async def resolve(self, host: str, port: int = 0, family: socket.AddressFamily = socket.AF_UNSPEC) -> list[ResolveResult]:
         logger.debug("Resolving DNS at %s for %s:%i (%s)", self.where, host, port, "ipv6" if family == socket.AF_INET6 else "ipv4")
@@ -291,7 +291,7 @@ class Pingable(ABC):
     def get_state_name(available: bool):
         return 'up' if available else 'down'
 
-    async def wait_for(self, available: bool, timeout: float):
+    async def wait_for(self, available: bool, timeout: float): # NOSONAR(S7483)
         logger.debug("Waiting for %s to be %s (timeout is %ds)", LazyStr(self.get_class_name), LazyStr(Pingable.get_state_name, available), int(timeout))
         async with asyncio.timeout(timeout):
             while await self.ping(available) != available:
@@ -315,7 +315,7 @@ class Manageable(Pingable):
         super().__init__()
         self.manager = manager
 
-    async def _set_state(self, available: bool, repeat: float, timeout: float):
+    async def _set_state(self, available: bool, repeat: float, timeout: float): # NOSONAR(S7483)
         action_name = LazyStr(lambda: 'Starting' if available else 'Stopping')
         class_name = LazyStr(self.get_class_name)
         available_name = LazyStr(Pingable.get_state_name, available)
@@ -344,10 +344,10 @@ class Manageable(Pingable):
         logger.info("%s is %s", LazyStr(self.get_class_name), LazyStr(Pingable.get_state_name, available))
         return available
 
-    async def start(self, repeat: float, timeout: float):
+    async def start(self, repeat: float, timeout: float): # NOSONAR(S7483)
         return await self._set_state(True, repeat, timeout)
 
-    async def stop(self, repeat: float, timeout: float):
+    async def stop(self, repeat: float, timeout: float): # NOSONAR(S7483)
         return await self._set_state(False, repeat, timeout)
 
 class Service(Manageable):
@@ -367,11 +367,11 @@ class Service(Manageable):
             writer.close()
             await writer.wait_closed()
 
-    async def _ping(self, availability_hint: bool | None = None):
+    async def _ping(self, availability_hint: bool | None = None): # NOSONAR(S1172)
         logger.debug("Pinging %s (%s:%s)", LazyStr(self.get_class_name), str(self.host), str(self.port))
         await self._connect(self.host, self.port)
 
-    async def ping(self, availability_hint: bool | None = None):
+    async def ping(self, availability_hint: bool | None = None): # NOSONAR(S3776)
         try:
             await self._ping(availability_hint)
             return True
@@ -426,9 +426,9 @@ class SshService(Service):
             asyncssh.connect(host, port, options=asyncssh.SSHClientConnectionOptions(
                 host_key_alias=self.host_name,
                 client_keys=_client_key(),
-                connect_timeout=self._connect_timeout)) as conn
+                connect_timeout=self._connect_timeout))
         ):
-            pass
+            pass # NOSONAR(S108)
 
 class Device(Manageable):
     def __init__(self, host: str, manager: Manager):
@@ -458,7 +458,7 @@ class StateSerializer:
     @staticmethod
     def loads(s: str):
         try:
-            return dict({k: StateSerializer.load_value(v) for k, v in [s.split('=') for s in s.split(',')]})
+            return {k: StateSerializer.load_value(v) for k, v in [s.split('=') for s in s.split(',')]}
         except ValueError as e:
             e.add_note("Missing '=' in state")
             raise
@@ -468,7 +468,7 @@ class PhoneState(ABC):
     PFTPD = 'pftpd'
 
     @abstractmethod
-    async def get(self, repeat: float, timeout: float) -> dict:
+    async def get(self, repeat: float, timeout: float) -> dict: # NOSONAR(S7483)
         pass
 
 ########
@@ -530,7 +530,7 @@ class ServiceResolver:
         self.zeroconf = zeroconf
         self.service_type = service_type
 
-    async def get(self, service_name: str, timeout: float = 3):
+    async def get(self, service_name: str, timeout: float = 3): # NOSONAR(S7483)
         service_info = await self.zeroconf.async_get_service_info(self.service_type, f"{service_name}.{self.service_type}", timeout=int(timeout*1000))
         if not service_info or not service_info.port:
             raise TimeoutError("Unable to resolve zeroconf (DNS-SD) service information")
@@ -647,6 +647,7 @@ class PftpdServiceListener(ServiceListener):
             logger.debug(" (ServiceListener) Resolved %s to %s:%d", service_name, host, port)
 
     def del_service(self, service_name: str):
+        # we intentionally do not remove anything from the cache
         pass
 
 class RemotePftpd(SshService):
@@ -861,7 +862,7 @@ class Webhooks:
     def __init__(self, host: str, port: int):
         self.host = host
         self.port = port
-        self.variables = dict[str, asyncio.Queue[str]]()
+        self.variables: dict[str, asyncio.Queue[str]] = {}
 
     @staticmethod
     def get_ping_path():
@@ -872,7 +873,7 @@ class Webhooks:
         return f'/{Webhooks.VARIABLE_PATH}/{variable}'
 
     async def _start(self):
-        async def _ping(request: web.Request):
+        async def _ping(request: web.Request): # NOSONAR(S7503)
             return web.Response(text='pong')
         async def _receive_variable(request: web.Request):
             queue = self.variables.get(request.match_info['name'])
@@ -899,7 +900,7 @@ class Webhooks:
     def unsubscribe_variable(self, variable: str):
         self.variables.pop(variable)
 
-    async def get_variable(self, variable: str, timeout: float):
+    async def get_variable(self, variable: str, timeout: float): # NOSONAR(S7483)
         queue = self.variables.get(variable)
         if not queue:
             raise ValueError(f"The {variable} is unknown")
@@ -913,6 +914,7 @@ class Webhooks:
     def __enter__(self):
         raise TypeError("Use async with instead")
     def __exit__(self, exc_type, exc_value, exc_tb):
+        # can't be called
         pass
     async def __aenter__(self):
         await self._start()
@@ -936,7 +938,7 @@ class Automate:
             "payload": f"prim-ctrl;{time.time()};" + message
         }
         logger.debug("Messaging Automate with: %s", message)
-        async with self.session.post(f'https://llamalab.com/automate/cloud/message', json=data) as response:
+        async with self.session.post('https://llamalab.com/automate/cloud/message', json=data) as response:
             await response.text()
 
 class AutomatePftpdManager(Manager):
@@ -1072,9 +1074,9 @@ class WideHelpFormatter(argparse.RawTextHelpFormatter):
 
 async def gather_with_taskgroup(*coros):
     try:
-        async with asyncio.TaskGroup() as tg:
+        async with asyncio.TaskGroup() as tg: # NOSONAR(S7513)
             tasks = [tg.create_task(coro) for coro in coros]
-        return tuple([task.result() for task in tasks])
+        return tuple(task.result() for task in tasks)
     except ExceptionGroup as eg:
         exc = eg.exceptions[0]
         # this can be captured in another TaskGroup that drops traceback information from "from e"
@@ -1111,6 +1113,7 @@ class Control:
 
     @staticmethod
     def setup_parser_options(parser):
+        # no options
         pass
 
     @staticmethod
@@ -1145,12 +1148,12 @@ class Control:
         self.phone = phone
         self.keyboard_interrupt = keyboard_interrupt
 
-    async def _stop(self, restore_state: dict | None, stop_only_started: bool = False):
+    async def _stop(self, restore_state: dict | None, stop_only_started: bool = False): # NOSONAR(S3776)
         with self.keyboard_interrupt.protect():
             async def _suppress(coro, default: bool):
                 try:
                     return await coro
-                except:
+                except: # NOSONAR(S5754)
                     return default
             if self.local.vpn and self.phone.vpn and self.phone.remote_sftp and await _suppress(self.local.vpn.test(), True) and await _suppress(self.phone.vpn.test(), True):
                 if (restore_state is None or not restore_state.get(Control.PHONE_SFTP, stop_only_started)) and await _suppress(self.phone.remote_sftp.test(), True):
@@ -1176,7 +1179,7 @@ class Control:
                     except Exception as e:
                         logger.exception_or_error(e)
 
-    async def run(self):
+    async def run(self): # NOSONAR(S3776)
         match self.args.intent:
             case 'test':
                 if self.local.vpn and self.phone.vpn and self.phone.remote_sftp and self.phone.state:
@@ -1188,7 +1191,7 @@ class Control:
                     await self.phone.zeroconf_sftp.test()
             case 'start':
                 if self.local.vpn and self.phone.vpn and self.phone.remote_sftp:
-                    state = dict()
+                    state = {}
                     try:
                         # gather local state info
                         local_vpn_state = await self.local.vpn.test()
@@ -1208,7 +1211,7 @@ class Control:
                             state[Control.PHONE_VPN] = phone_vpn_state
                             state[Control.PHONE_SFTP] = phone_state[PhoneState.PFTPD]
                             if not state[Control.PHONE_WIFI] and not self.args.accept_cellular:
-                                raise RuntimeError(f"Phone is not on Wi-Fi network")
+                                raise RuntimeError("Phone is not on Wi-Fi network")
                         else:
                             state[Control.PHONE_VPN] = phone_vpn_state = await self.phone.vpn.test()
                             if phone_vpn_state:
@@ -1259,7 +1262,7 @@ class Control:
                             raise RuntimeError(f"Even when {self.phone.vpn.get_class_name()} and {self.phone.remote_sftp.get_class_name()} is started, {self.phone.remote_sftp.get_class_name()} is still not accessible")
                         # print out result on stdout
                         if not self.args.backup_state:
-                            state = dict()
+                            state = {}
                         state[Control.CONNECTED] = Control.ZEROCONF if zeroconf_accessible else Control.REMOTE
                         print(StateSerializer.dumps(state))
                     except:

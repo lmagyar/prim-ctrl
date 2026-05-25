@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.8.2
+
+- Fix sonarqube issues
+
 ## 0.8.1
 
 - Use original OS DNS resolver instead of hard wired 1.1.1.1
