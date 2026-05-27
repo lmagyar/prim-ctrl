@@ -288,11 +288,14 @@ class Pingable(ABC):
         return self.__qualname__ if hasattr(self, '__qualname__') else self.__class__.__qualname__.rsplit('.', maxsplit=1)[0]
 
     @staticmethod
-    def get_state_name(available: bool):
+    def _get_state_name(available: bool):
         return 'up' if available else 'down'
 
+    def get_state_name(self, available: bool):
+        return Pingable._get_state_name(available)
+
     async def wait_for(self, available: bool, timeout: float): # NOSONAR(S7483)
-        logger.debug("Waiting for %s to be %s (timeout is %ds)", LazyStr(self.get_class_name), LazyStr(Pingable.get_state_name, available), int(timeout))
+        logger.debug("Waiting for %s to be %s (timeout is %ds)", LazyStr(self.get_class_name), LazyStr(self.get_state_name, available), int(timeout))
         async with asyncio.timeout(timeout):
             while await self.ping(available) != available:
                 await self._sleep_while_wait(available)
@@ -318,7 +321,7 @@ class Manageable(Pingable):
     async def _set_state(self, available: bool, repeat: float, timeout: float): # NOSONAR(S7483)
         action_name = LazyStr(lambda: 'Starting' if available else 'Stopping')
         class_name = LazyStr(self.get_class_name)
-        available_name = LazyStr(Pingable.get_state_name, available)
+        available_name = LazyStr(self.get_state_name, available)
         logger.info("%s %s...", action_name, class_name)
         logger.debug("%s %s (repeat after %ds, timeout is %ds)", action_name, class_name, int(repeat), int(timeout))
         try:
@@ -336,12 +339,12 @@ class Manageable(Pingable):
         except TimeoutError as e:
             e.add_note(f"Can't get {class_name} {available_name} for {timeout} seconds")
             raise
-        logger.info("  %s is %s", class_name, available_name)
+        logger.info("...%s is %s", class_name, available_name)
         return available
 
     async def test(self):
         available = await self.ping()
-        logger.info("%s is %s", LazyStr(self.get_class_name), LazyStr(Pingable.get_state_name, available))
+        logger.info("%s is %s", LazyStr(self.get_class_name), LazyStr(self.get_state_name, available))
         return available
 
     async def start(self, repeat: float, timeout: float): # NOSONAR(S7483)
@@ -411,6 +414,9 @@ class SshService(Service):
             return True
         self._special_exceptions_handler = _handle_special_exceptions
 
+    def get_state_name(self, available: bool):
+        return 'reachable' if available else 'unreachable'
+
     async def _connect(self, host: str, port: int):
         logger.debug(" Connecting with SSH to %s:%d (timeout is %ds)", host, port, self._connect_timeout)
         def _client_key():
@@ -440,7 +446,7 @@ class Device(Manageable):
         return await Subprocess.ping(self.host, timeout=2)
 
 class StateSerializer:
-    BOOL = {False: Pingable.get_state_name(False), True: Pingable.get_state_name(True)}
+    BOOL = {False: Pingable._get_state_name(False), True: Pingable._get_state_name(True)}
     INV_BOOL = {v: k for k, v in BOOL.items()}
 
     @staticmethod
@@ -655,10 +661,16 @@ class RemotePftpd(SshService):
         super().__init__(host, port, host_name, keyfile, manager)
         self.__qualname__ = "pFTPd"
 
+    def get_state_name(self, available: bool):
+        return super().get_state_name(available) + ' remotely'
+
 class ZeroconfPftpd(ZeroconfSshService):
     def __init__(self, service_name: str, service_cache: ServiceCache, service_resolver: ServiceResolver, keyfile: str, manager: Manager):
         super().__init__(service_name, service_cache, service_resolver, keyfile, manager)
         self.__qualname__ = "pFTPd"
+
+    def get_state_name(self, available: bool):
+        return super().get_state_name(available) + ' locally'
 
 ########
 
@@ -798,7 +810,7 @@ class LocalTailscale(Manageable):
             difference_sec = difference.total_seconds() if difference else None
             if difference_sec is None or difference_sec > max_last_seen_age:
                 # wait a little to avoid caching empty DNS entry for 5 minutes, better to loose a few seconds than 300s
-                logger.debug("Waiting for %is, because %s is freshly started up and wasn't seen for more than %ih (last seen at %s, %s ago)",
+                logger.debug("Waiting for %is, because %s is freshly started up and hasn't been seen for more than %ih (last seen at %s, %s ago)",
                      wait_on_fresh_start, LazyStr(self.get_class_name), max_last_seen_age/3600,
                      LazyStr((lambda last_seen : str(last_seen.astimezone())[:19] if last_seen else None), device_info.last_seen), LazyStr(difference))
                 await asyncio.sleep(wait_on_fresh_start)
@@ -981,7 +993,7 @@ class WebhookPing(Pingable):
 
     async def _sleep_while_wait(self, available: bool):
         if 0 != self._sleepcounter and 0 == self._sleepcounter % 60:
-            logger.info("Waiting for %s (%s) to be accessible...", LazyStr(self.get_class_name), self.ping_url)
+            logger.info("Waiting for %s (%s) to be reachable...", LazyStr(self.get_class_name), self.ping_url)
         await asyncio.sleep(1)
         self._sleepcounter += 1
 
@@ -1201,8 +1213,8 @@ class Control:
                         if not state[Control.LOCAL_VPN]:
                             await self.local.vpn.start(10, 30)
 
-                        zeroconf_accessible = False
-                        remote_accessible = False
+                        zeroconf_reachable = False
+                        remote_reachable = False
 
                         # gather phone state info
                         if self.phone.state:
@@ -1215,55 +1227,55 @@ class Control:
                         else:
                             state[Control.PHONE_VPN] = phone_vpn_state = await self.phone.vpn.test()
                             if phone_vpn_state:
-                                state[Control.PHONE_SFTP] = remote_accessible = await self.phone.remote_sftp.test()
+                                state[Control.PHONE_SFTP] = remote_reachable = await self.phone.remote_sftp.test()
                         # start changing phone state
                         phone_vpn = state[Control.PHONE_VPN]
                         if not phone_vpn and self.args.restart_vpn is not None and not await self.phone.vpn.seen(self.args.restart_vpn):
                             logger.info("%s wasn't seen for %d days", LazyStr(self.phone.vpn.get_class_name), self.args.restart_vpn)
                             phone_vpn = await self.phone.vpn.start(10, 60)
                             if not self.phone.state:
-                                state[Control.PHONE_SFTP] = remote_accessible = await self.phone.remote_sftp.test()
+                                state[Control.PHONE_SFTP] = remote_reachable = await self.phone.remote_sftp.test()
                         if self.phone.state:
                             if not state[Control.PHONE_SFTP]:
                                 if not phone_vpn:
                                     if state[Control.PHONE_WIFI]:
                                         try:
-                                            zeroconf_accessible = await self.phone.zeroconf_sftp.start(10, 30)
+                                            zeroconf_reachable = await self.phone.zeroconf_sftp.start(10, 30)
                                         except TimeoutError:
                                             await self.phone.vpn.start(10, 60)
-                                            remote_accessible = await self.phone.remote_sftp.test()
+                                            remote_reachable = await self.phone.remote_sftp.test()
                                     else:
                                         await self.phone.vpn.start(10, 60)
-                                        remote_accessible = await self.phone.remote_sftp.start(10, 30)
+                                        remote_reachable = await self.phone.remote_sftp.start(10, 30)
                                 else:
-                                    remote_accessible = await self.phone.remote_sftp.start(10, 30)
+                                    remote_reachable = await self.phone.remote_sftp.start(10, 30)
                                     if state[Control.PHONE_WIFI]:
-                                        zeroconf_accessible = await self.phone.zeroconf_sftp.test()
+                                        zeroconf_reachable = await self.phone.zeroconf_sftp.test()
                             else:
                                 if not phone_vpn:
-                                    if not state[Control.PHONE_WIFI] or not (zeroconf_accessible := await self.phone.zeroconf_sftp.test()):
+                                    if not state[Control.PHONE_WIFI] or not (zeroconf_reachable := await self.phone.zeroconf_sftp.test()):
                                         await self.phone.vpn.start(10, 60)
-                                        remote_accessible = await self.phone.remote_sftp.test()
+                                        remote_reachable = await self.phone.remote_sftp.test()
                                 else:
-                                    zeroconf_accessible, remote_accessible = await gather_with_taskgroup(self.phone.zeroconf_sftp.test(), self.phone.remote_sftp.test())
+                                    zeroconf_reachable, remote_reachable = await gather_with_taskgroup(self.phone.zeroconf_sftp.test(), self.phone.remote_sftp.test())
                         else:
                             if not phone_vpn:
-                                if not (zeroconf_accessible := await self.phone.zeroconf_sftp.test()):
+                                if not (zeroconf_reachable := await self.phone.zeroconf_sftp.test()):
                                     try:
-                                        zeroconf_accessible = await self.phone.zeroconf_sftp.start(10, 30)
+                                        zeroconf_reachable = await self.phone.zeroconf_sftp.start(10, 30)
                                     except TimeoutError:
                                         await self.phone.vpn.start(10, 60)
-                                        remote_accessible = await self.phone.remote_sftp.test()
+                                        remote_reachable = await self.phone.remote_sftp.test()
                             else:
                                 if not state[Control.PHONE_SFTP]:
-                                    remote_accessible = await self.phone.remote_sftp.start(10, 30)
-                                zeroconf_accessible = await self.phone.zeroconf_sftp.test()
-                        if not zeroconf_accessible and not remote_accessible:
-                            raise RuntimeError(f"Even when {self.phone.vpn.get_class_name()} and {self.phone.remote_sftp.get_class_name()} is started, {self.phone.remote_sftp.get_class_name()} is still not accessible")
+                                    remote_reachable = await self.phone.remote_sftp.start(10, 30)
+                                zeroconf_reachable = await self.phone.zeroconf_sftp.test()
+                        if not zeroconf_reachable and not remote_reachable:
+                            raise RuntimeError(f"Even when {self.phone.vpn.get_class_name()} and {self.phone.remote_sftp.get_class_name()} is started, {self.phone.remote_sftp.get_class_name()} is still unreachable")
                         # print out result on stdout
                         if not self.args.backup_state:
                             state = {}
-                        state[Control.CONNECTED] = Control.ZEROCONF if zeroconf_accessible else Control.REMOTE
+                        state[Control.CONNECTED] = Control.ZEROCONF if zeroconf_reachable else Control.REMOTE
                         print(StateSerializer.dumps(state))
                     except:
                         try:
@@ -1292,8 +1304,8 @@ class AutomateControl(Control):
         parser = subparsers.add_parser('Automate', aliases=['a'],
             description="Remote control of your phone's Primitive FTPd and optionally Tailscale app statuses via the Automate app, for more details see https://github.com/lmagyar/prim-ctrl\n\n"
                 "Note: you must install Automate app on your phone, download prim-ctrl flow into it, and configure your Google account in the flow to receive messages (see the project's GitHub page for more details)\n"
-                "Note: optionally if your phone is not accessible on local network but your laptop and phone is part of the Tailscale VPN then Tailscale VPN can be started on the phone\n"
-                "Note: optionally if your laptop is accessible through Tailscale Funnel then VPN on cellular can be refused and app statuses on the phone can be backed up and restored\n\n"
+                "Note: optionally if your phone is not reachable on local network but your laptop and phone is part of the Tailscale VPN then Tailscale VPN can be started on the phone\n"
+                "Note: optionally if your laptop is reachable through Tailscale Funnel then VPN on cellular can be refused and app statuses on the phone can be backed up and restored\n\n"
                 "Output: even when -b option is not used, the script will output 'connected=(local|remote)', what you can use to determine whether to use -a option for the prim-sync script",
             formatter_class=WideHelpFormatter)
 

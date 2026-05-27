@@ -148,8 +148,8 @@ usage: prim-ctrl Automate [-h] [-i {test,start,stop}] [-t] [-s] [--debug] [--tai
 Remote control of your phone's Primitive FTPd and optionally Tailscale app statuses via the Automate app, for more details see https://github.com/lmagyar/prim-ctrl
 
 Note: you must install Automate app on your phone, download prim-ctrl flow into it, and configure your Google account in the flow to receive messages (see the project's GitHub page for more details)
-Note: optionally if your phone is not accessible on local network but your laptop and phone is part of the Tailscale VPN then Tailscale VPN can be started on the phone
-Note: optionally if your laptop is accessible through Tailscale Funnel then VPN on cellular can be refused and app statuses on the phone can be backed up and restored
+Note: optionally if your phone is not reachable on local network but your laptop and phone is part of the Tailscale VPN then Tailscale VPN can be started on the phone
+Note: optionally if your laptop is reachable through Tailscale Funnel then VPN on cellular can be refused and app statuses on the phone can be backed up and restored
 
 Output: even when -b option is not used, the script will output 'connected=(local|remote)', what you can use to determine whether to use -a option for the prim-sync script
 
