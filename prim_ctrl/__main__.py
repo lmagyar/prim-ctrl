@@ -1310,13 +1310,13 @@ class AutomateControl(Control):
 
         Control.setup_parser_groups(parser)
 
-        vpn_group = parser.add_argument_group('VPN',
-            description="To use --tailscale option you must install Tailscale and configure Tailscale VPN on your phone and your laptop\n"
-                "To use --funnel option you must configure Tailscale Funnel on your laptop for prim-ctrl's local webhook to accept responses from the Automate app\n"
-                "   (eg.: tailscale funnel --bg --https=8443 --set-path=/prim-ctrl \"http://127.0.0.1:12345\")\n"
-                "Note: --funnel, --restart-vpn, --backup-state and --restore-state options can be used only when --tailscale is used\n"
-                "Note: --backup-state is accurate only, when --funnel is used\n"
-                "Note: --accept-cellular option can be used only when --funnel is used")
+        vpn_group = parser.add_argument_group('VPN', description=
+            "To use --tailscale option you must install Tailscale and configure Tailscale VPN on your phone and your laptop\n"
+            "To use --funnel option you must configure Tailscale Funnel on your laptop for prim-ctrl's local webhook to accept responses from the Automate app\n"
+            "   (eg.: tailscale funnel --bg --https=8443 --set-path=/prim-ctrl \"http://127.0.0.1:12345\")\n"
+            "Note: --funnel, --restart-vpn, --backup-state and --restore-state options can be used only when --tailscale is used\n"
+            "Note: --backup-state is accurate only, when --funnel is used\n"
+            "Note: --accept-cellular option can be used only when --funnel is used")
         vpn_group.add_argument('--tailscale', nargs=4, metavar=('tailnet', 'secretfile', 'remote-machine-name', 'sftp-port'), help=
             "tailnet:             your Tailscale tailnet name (eg. tailxxxx.ts.net)\n"
             "secretfile:          filename containing Tailscale's Client secret (not API access token, not Auth key) that located under your .secrets folder\n"
