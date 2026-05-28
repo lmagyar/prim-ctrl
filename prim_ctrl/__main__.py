@@ -860,8 +860,8 @@ class RemoteTailscale(StatSeenDevice):
     async def seen(self, days: int) -> bool:
         device_info = await self.tailscale.device(self.machine_name)
         logger.debug("%s connected: %s, last seen: %s", LazyStr(self.get_class_name), device_info.connected_to_control, device_info.last_seen)
-        if device_info.connected_to_control:
-            return True
+        # we check this only when it is not started, then connected_to_control is False, use last_seen only
+        # additionally connected_to_control state changes are delayed, it can be True if it was stopped recently
         if not device_info.last_seen or days == 0:
             return False
         difference = datetime.now(timezone.utc).replace(microsecond=0) - device_info.last_seen
