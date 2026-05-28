@@ -75,10 +75,7 @@ class Logger(logging.Logger):
         if self.level == logging.NOTSET or self.level == logging.DEBUG:
             logger.exception(e)
         else:
-            if hasattr(e, '__notes__'):
-                logger.error("%s: %s", LazyStr(repr, e), LazyStr(", ".join, e.__notes__))
-            else:
-                logger.error(LazyStr(repr, e))
+            logger.error(LazyStr(exception_repr, e))
 
     def error(self, msg, *args, **kwargs):
         self.exitcode = 1
@@ -94,6 +91,9 @@ class Logger(logging.Logger):
         elif level >= logging.ERROR:
             self.exitcode = 1
         super().log(level, msg, *args, **kwargs)
+
+def exception_repr(e: BaseException) -> str:
+    return f"{repr(e)}: {", ".join(e.__notes__)}" if hasattr(e, '__notes__') else repr(e)
 
 class LazyStr:
     def __init__(self, func, *args, **kwargs):
@@ -250,8 +250,6 @@ class ExternalDnsResolver(DnsResolver):
         except (dns.resolver.NXDOMAIN, dns.resolver.NoAnswer) as e:
             msg = '; '.join(e.args) if len(e.args) else "DNS lookup failed"
             exc = LookupError(msg)
-            # this is captured in a TaskGroup that drops traceback information from "from e"
-            exc.add_note(repr(e))
             raise exc from None
 
         hosts = []
@@ -624,7 +622,7 @@ class ZeroconfService(Service):
                     return
                 except (TimeoutError, socket.gaierror, ConnectionRefusedError) + self._special_exceptions as e:
                     if availability_hint is None or availability_hint:
-                        logger.debug("  %s", LazyStr(repr, e))
+                        logger.debug("  %s", LazyStr(exception_repr, e))
                     else:
                         raise
             host, port = await self._resolve()
@@ -737,7 +735,7 @@ class Funnel(Pingable):
         try:
             _answer = await self.external_tailscale_dns_resolver.resolve(self.external_name, self.external_port)
         except Exception as e:
-            logger.debug("Resolving at Tailscale's external DNS has failed: %s", LazyStr(repr, e))
+            logger.debug("Resolving at Tailscale's external DNS has failed: %s", LazyStr(exception_repr, e))
             return False
         # then try at a public DNS
         if self.external_public_dns_resolver is None:
@@ -745,7 +743,7 @@ class Funnel(Pingable):
         try:
             _answer = await self.external_public_dns_resolver.resolve(self.external_name, self.external_port)
         except Exception as e:
-            logger.debug("Resolving at public external DNS has failed: %s", LazyStr(repr, e))
+            logger.debug("Resolving at public external DNS has failed: %s", LazyStr(exception_repr, e))
             return False
         return True
 
@@ -1032,8 +1030,8 @@ class AutomatePhoneState(PhoneState):
             await self.local_webhook_ping.wait_for(True, test_timeout)
         except Exception as e:
             exc = RuntimeError(f"Local Funnel is not configured properly for {self.funnel.external_url}")
-            # this is captured in a TaskGroup that drops traceback information from "from e"
-            exc.add_note(repr(e))
+            # if this is captured in a TaskGroup that drops traceback information from "from e"
+            exc.add_note(exception_repr(e))
             raise exc from None
 
         # test funnel's DNS resolvability, if local Tailscale is freshly started up after longer down state, it can take up to 10 minutes for public DNS records to get updated
@@ -1043,8 +1041,8 @@ class AutomatePhoneState(PhoneState):
             await self.funnel.wait_for(True, test_timeout)
         except Exception as e:
             exc = RuntimeError(f"Funnel's DNS is not configured by Tailscale for {self.funnel.external_name}")
-            # this is captured in a TaskGroup that drops traceback information from "from e"
-            exc.add_note(repr(e))
+            # if this is captured in a TaskGroup that drops traceback information from "from e"
+            exc.add_note(exception_repr(e))
             raise exc from None
 
         # test external funnel + webhooks availability, ie. test funnel tcp forwarders
@@ -1055,8 +1053,8 @@ class AutomatePhoneState(PhoneState):
             await self.external_webhook_ping.wait_for(True, test_timeout)
         except Exception as e:
             exc = RuntimeError(f"Funnel TCP forwarders are not configured by Tailscale for {self.funnel.external_name}")
-            # this is captured in a TaskGroup that drops traceback information from "from e"
-            exc.add_note(repr(e))
+            # if this is captured in a TaskGroup that drops traceback information from "from e"
+            exc.add_note(exception_repr(e))
             raise exc from None
 
         # get state
@@ -1096,7 +1094,7 @@ async def gather_with_taskgroup(*coros):
         # this can be captured in another TaskGroup that drops traceback information from "from e"
         if len(eg.exceptions) > 1:
             for e in eg.exceptions[1:]:
-                exc.add_note(repr(e))
+                exc.add_note(exception_repr(e))
         raise exc from None
 
 class Local:
