@@ -1,5 +1,9 @@
 # Changelog
 
+# vNext
+
+- Use cache for Tailscale devices API
+
 ## 0.8.2
 
 - Fix sonarqube issues

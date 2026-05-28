@@ -701,14 +701,21 @@ class Tailscale():
         self.tailscale_api = TailscaleApi(session=session, request_timeout=30, tailnet=tailnet,
             oauth_client_id=client_id, oauth_client_secret=client_secret, token_storage=SecretsTokenStorage(secrets, secretfile))
 
-    async def device(self, machine_name: str) -> TailscaleDeviceInfo:
-        logger.debug("Calling Tailscale API for devices")
-        devices = await self.tailscale_api.devices()
-        name = f"{machine_name}.{self.tailnet}"
-        for device in devices.values():
-            if device.name == name:
-                return device
-        raise RuntimeError(f"Device {machine_name} in {self.tailnet} is unknown by Tailscale")
+        self._devices: dict[str, TailscaleDeviceInfo] | None = None
+
+    async def devices(self, use_cache: bool = True) -> dict[str, TailscaleDeviceInfo]:
+        if self._devices is not None and use_cache:
+            logger.debug("Using cached values instead of calling Tailscale API for devices")
+        else:
+            logger.debug("Calling Tailscale API for devices")
+            self._devices = {device.name: device for device in (await self.tailscale_api.devices()).values()}
+        return self._devices
+
+    async def device(self, machine_name: str, use_cache: bool = True) -> TailscaleDeviceInfo:
+        device = (await self.devices(use_cache)).get(f"{machine_name}.{self.tailnet}", None)
+        if device is None:
+            raise RuntimeError(f"Device {machine_name} in {self.tailnet} is unknown by Tailscale")
+        return device
 
 class Funnel(Pingable):
     LOCAL_HOST = '127.0.0.1'
