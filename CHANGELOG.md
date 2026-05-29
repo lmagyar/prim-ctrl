@@ -1,5 +1,10 @@
 # Changelog
 
+# 0.8.3
+
+- Use cache for Tailscale devices API
+- Loop through all Tailscale DNSs when testing Funnel's DNS configuration
+
 ## 0.8.2
 
 - Fix sonarqube issues
