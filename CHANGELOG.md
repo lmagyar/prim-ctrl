@@ -1,6 +1,6 @@
 # Changelog
 
-# vNext
+# 0.8.3
 
 - Use cache for Tailscale devices API
 - Loop through all Tailscale DNSs when testing Funnel's DNS configuration
