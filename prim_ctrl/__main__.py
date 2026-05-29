@@ -727,8 +727,10 @@ class Funnel(Pingable):
         self.external_port = external_port
         self.external_url = f'https://{machine_name}.{tailscale.tailnet}:{external_port}{local_path}'
         self.local_tailscale = local_tailscale
+        self.external_public_dns_resolver_address = None
         self.external_public_dns_resolver = None
-        self.external_tailscale_dns_resolvers = None
+        self.external_tailscale_dns_resolver_addresses = None
+        self.external_tailscale_dns_resolver = None
 
     async def wait_for(self, available: bool, timeout: float):
         self._sleepcounter = 0
@@ -737,25 +739,33 @@ class Funnel(Pingable):
     async def ping(self, availability_hint: bool | None = None):
         logger.debug("Resolving DNS for %s (%s:%s)", LazyStr(self.get_class_name), self.external_name, self.external_port)
         # first try at Tailscale's DNSs, if they don't know, we should not resolve at a public DNS and cache nxdomain for 5 minutes
-        if self.external_tailscale_dns_resolvers is None:
+        if self.external_tailscale_dns_resolver_addresses is None:
             resolvers = [await self.local_tailscale.external_tailscale_dns_resolver()]
             resolvers.extend(await self._external_tailscale_dns_resolvers())
-            self.external_tailscale_dns_resolvers = [ExternalDnsResolver(resolver) for resolver in resolvers]
+            self.external_tailscale_dns_resolver_addresses = resolvers
+        resolver = self.external_tailscale_dns_resolver
+        if resolver is None:
+            resolver = ExternalDnsResolver(self.external_tailscale_dns_resolver_addresses[0])
         try:
-            _answer = await self.external_tailscale_dns_resolvers[0].resolve(self.external_name, self.external_port)
+            _answer = await resolver.resolve(self.external_name, self.external_port)
         except Exception as e:
-            logger.debug("Resolving at Tailscale's external DNS %s has failed: %s", self.external_tailscale_dns_resolvers[0].where, LazyStr(exception_repr, e))
+            logger.debug("Resolving at Tailscale's external DNS %s has failed: %s", self.external_tailscale_dns_resolver_addresses[0], LazyStr(exception_repr, e))
             # move current resolver to the end of the list
-            self.external_tailscale_dns_resolvers.append(self.external_tailscale_dns_resolvers.pop(0))
+            self.external_tailscale_dns_resolver_addresses.append(self.external_tailscale_dns_resolver_addresses.pop(0))
             return False
+        self.external_tailscale_dns_resolver = resolver
         # then try at a public DNS
-        if self.external_public_dns_resolver is None:
-            self.external_public_dns_resolver = ExternalDnsResolver(await self.local_tailscale.external_public_dns_resolver())
+        if self.external_public_dns_resolver_address is None:
+            self.external_public_dns_resolver_address = await self.local_tailscale.external_public_dns_resolver()
+        resolver = self.external_public_dns_resolver
+        if resolver is None:
+            resolver = ExternalDnsResolver(self.external_public_dns_resolver_address)
         try:
-            _answer = await self.external_public_dns_resolver.resolve(self.external_name, self.external_port)
+            _answer = await resolver.resolve(self.external_name, self.external_port)
         except Exception as e:
             logger.debug("Resolving at public external DNS has failed: %s", LazyStr(exception_repr, e))
             return False
+        self.external_public_dns_resolver = resolver
         return True
 
     async def _sleep_while_wait(self, available: bool):

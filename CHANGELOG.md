@@ -1,5 +1,9 @@
 # Changelog
 
+# 0.8.4
+
+- Reinstantiate failed DNS resolvers
+
 # 0.8.3
 
 - Use cache for Tailscale devices API
