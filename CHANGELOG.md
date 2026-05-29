@@ -1,6 +1,6 @@
 # Changelog
 
-# vNext
+# 0.8.4
 
 - Reinstantiate failed DNS resolvers
 
