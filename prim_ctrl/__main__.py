@@ -44,13 +44,19 @@ class LevelFormatter(logging.Formatter):
         return self.formatters.get(record.levelno, self.default_formatter).format(record)
 
 class Logger(logging.Logger):
+    timestamp: bool = False
+
+    @staticmethod
+    def setConfiguration(timestamp: bool):
+        Logger.timestamp = timestamp
+
     def __init__(self, name, level = logging.NOTSET):
         super().__init__(name, level)
-        self.exitcode = 0
+        self.addHandler(logging.StreamHandler(sys.stderr))
+        self.configure()
 
-    def prepare(self, timestamp: bool, silent: bool):
-        handler = logging.StreamHandler(sys.stderr)
-        handler.setFormatter(
+    def configure(self):
+        formatter = (
             LevelFormatter(
                 {
                     logging.WARNING: '%(asctime)s %(message)s',
@@ -58,7 +64,7 @@ class Logger(logging.Logger):
                     logging.DEBUG: '%(asctime)s %(levelname)s %(message)s',
                 },
                 '%(asctime)s %(name)s: %(levelname)s: %(message)s')
-            if timestamp else
+            if Logger.timestamp else
             LevelFormatter(
                 {
                     logging.WARNING: '%(message)s',
@@ -67,9 +73,16 @@ class Logger(logging.Logger):
                 },
                 '%(name)s: %(levelname)s: %(message)s')
         )
-        self.addHandler(handler)
-        if self.level == logging.NOTSET:
-            self.setLevel(logging.WARNING if silent else logging.INFO)
+        for handler in self.handlers:
+            handler.setFormatter(formatter)
+
+class MainLogger(Logger):
+    def __init__(self, name, level = logging.NOTSET):
+        super().__init__(name, level)
+        self.exitcode = 0
+
+    def setConfiguration(self, level: int):
+        self.setLevel(level)
 
     def exception_or_error(self, e: Exception):
         if self.level == logging.NOTSET or self.level == logging.DEBUG:
@@ -109,7 +122,7 @@ class LazyStr:
                 self.result = str(self.func)
         return self.result
 
-logger = Logger(Path(sys.argv[0]).name)
+logger = MainLogger(Path(sys.argv[0]).name)
 
 ########
 
@@ -1168,9 +1181,11 @@ class Control:
 
     @staticmethod
     def prepare(args: argparse.Namespace):
-        if args.debug:
-            logger.setLevel(logging.DEBUG)
-        logger.prepare(args.timestamp or args.debug, args.silent)
+        Logger.setConfiguration(args.timestamp or args.debug)
+        logging.setLoggerClass(Logger)
+        logger.setConfiguration(
+            logging.DEBUG if args.debug else logging.WARNING if args.silent else logging.INFO) #NOSONAR(S3358)
+        logger.configure()
 
         if args.accept_cellular and args.intent != 'start':
             raise ValueError("The --accept-cellular options can be enabled only for the start intent")

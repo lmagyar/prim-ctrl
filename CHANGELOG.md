@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.8.5
+
+- Refactor logging for other modules also
+
 # 0.8.4
 
 - Reinstantiate failed DNS resolvers
