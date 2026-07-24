@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.8.6
+
+- Use intent to start/stop server
+
 ## 0.8.5
 
 - Refactor logging for other modules also

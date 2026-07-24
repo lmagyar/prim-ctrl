@@ -91,6 +91,8 @@ Optionally, if you want to edit or even contribute to the source, you also need 
 - Configuration tab
   - UI
     - Show notification to start/stop server(s): disable - this is necessary to determine whether Primitive FTPd is running on the phone or not, because the Automate flow determines whether the server is started with checking the existence of it's notification, and if the notification is always shown, that would make it false positive; please use another way, eg. a Quick Settings Tile to start/stop the server manually
+  - System
+    - Enable Tasker: enable
 
 ### Tailscale VPN (optional)
 
