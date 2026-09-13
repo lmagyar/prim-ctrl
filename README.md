@@ -79,7 +79,7 @@ Optionally, if you want to edit or even contribute to the source, you also need 
 
 ### Automate
 
-- Download the https://raw.githubusercontent.com/lmagyar/prim-ctrl/main/res/prim-ctrl.flo Automate flow to your phone (see [image](https://raw.githubusercontent.com/lmagyar/prim-ctrl/main/res/prim-ctrl.png) of the flow)
+- Download the https://raw.githubusercontent.com/lmagyar/prim-ctrl/main/res/prim-ctrl.flo Automate flow to your phone (see [image](https://media.githubusercontent.com/media/lmagyar/prim-ctrl/refs/heads/main/res/prim-ctrl.png) of the flow)
 - Import it with the ... menu / Import command
 - Enable all privileges
 - Click on the flow, edit the 2nd block (Set variable google_account to...), enter your Google account's email and press Save
