@@ -841,7 +841,7 @@ class LocalTailscale(Manageable):
         if start_result and not self._checked_fresh_start and self.machine_name:
             self._checked_fresh_start = True
             max_last_seen_age = 7200
-            wait_on_fresh_start = 5
+            wait_on_fresh_start = 10
             # if we started up now, then connected_to_control was False, use last_seen only
             # additionally connected_to_control state changes are delayed, it can be True if it was stopped recently
             difference = datetime.now(timezone.utc).replace(microsecond=0) - device_info.last_seen if device_info.last_seen else None
