@@ -77,6 +77,12 @@ Optionally, if you want to edit or even contribute to the source, you also need 
 
 ## Configuration
 
+### Android
+
+You have to enable Automate and Tailscale to run as much in the background as possible. Depending your Android version, Android keeps closing apps running in the background. Even if you think you configured explicitly not to do this. Please visit https://dontkillmyapp.com/ on more information about battery saving options.
+
+You have to disable auto update for Automate, because updates kill all running flows without restarting them. Please open Android Settings, Apps, select Automate, App details in store, ... menu, turn off "Enable auto update".
+
 ### Automate
 
 - Download the https://raw.githubusercontent.com/lmagyar/prim-ctrl/main/res/prim-ctrl.flo Automate flow to your phone (see [image](https://media.githubusercontent.com/media/lmagyar/prim-ctrl/refs/heads/main/res/prim-ctrl.png) of the flow)
