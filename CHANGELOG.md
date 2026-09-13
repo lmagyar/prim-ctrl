@@ -1,6 +1,6 @@
 # Changelog
 
-## vNext
+## 0.8.7
 
 - Increase wait time in case of a fresh local TS startup
 
