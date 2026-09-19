@@ -1,6 +1,6 @@
 # Changelog
 
-## vNext
+## 0.8.8
 
 - Increase wait time for phone state
 
