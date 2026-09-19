@@ -1236,7 +1236,7 @@ class Control:
             case 'test':
                 if self.local.vpn and self.phone.vpn and self.phone.remote_sftp and self.phone.state:
                     if await self.local.vpn.test():
-                        phone_state, _vpn_state = await gather_with_taskgroup(self.phone.state.get(10, 30), self.phone.vpn.test())
+                        phone_state, _vpn_state = await gather_with_taskgroup(self.phone.state.get(10, 60), self.phone.vpn.test())
                 elif self.local.vpn and self.phone.vpn and self.phone.remote_sftp and await self.local.vpn.test() and await self.phone.vpn.test():
                     await self.phone.remote_sftp.test()
                 else:
@@ -1258,7 +1258,7 @@ class Control:
 
                         # gather phone state info
                         if self.phone.state:
-                            phone_state, phone_vpn_state = await gather_with_taskgroup(self.phone.state.get(10, 30), self.phone.vpn.test())
+                            phone_state, phone_vpn_state = await gather_with_taskgroup(self.phone.state.get(10, 60), self.phone.vpn.test())
                             state[Control.PHONE_WIFI] = phone_state[PhoneState.WIFI]
                             state[Control.PHONE_VPN] = phone_vpn_state
                             state[Control.PHONE_SFTP] = phone_state[PhoneState.PFTPD]
